@@ -1,4 +1,4 @@
-mercati-energetici
+entsoe-py
 pandas
 streamlit
 plotly

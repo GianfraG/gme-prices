@@ -2,8 +2,14 @@ name: Aggiorna prezzi GME
 
 on:
   schedule:
-    # Ogni giorno alle 14:00 UTC (~16:00 ora italiana), dopo la pubblicazione
-    # dei risultati MGP. Gira sui server di GitHub, non sul tuo PC.
+    # Una volta al giorno alle 14:00 UTC (metà pomeriggio ora italiana),
+    # dopo che il mercato del giorno prima ha pubblicato i risultati
+    # (di norma entro le 13:00 CET). Il dataset ha risoluzione di 15
+    # minuti, ma questo riguarda la granularità dei prezzi pubblicati,
+    # non la frequenza con cui vale la pena controllarli: un solo run al
+    # giorno basta, la dashboard si occupa poi di aggiornarsi visivamente
+    # (vedi app.py). La logica di recupero automatico in fetch_prices.py
+    # copre eventuali run saltati.
     - cron: "0 14 * * *"
   workflow_dispatch: {}  # permette anche di lanciarlo manualmente da GitHub
 
@@ -24,12 +30,14 @@ jobs:
 
       - name: Scarica i prezzi (con recupero automatico dei giorni mancanti)
         id: fetch
+        env:
+          ENTSOE_API_TOKEN: ${{ secrets.ENTSOE_API_TOKEN }}
         run: python fetch_prices.py
 
       - name: Salva i nuovi dati nel repo
         run: |
           git config user.name "gme-price-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data/prezzi_zonali.csv
-          git diff --quiet --cached || git commit -m "Aggiornamento dati prezzi $(date -u +%F)"
+          git add data/prezzi_zonali.csv data/last_update.json
+          git diff --quiet --cached || git commit -m "Aggiornamento dati prezzi $(date -u +%FT%TZ)"
           git push

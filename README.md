@@ -1,54 +1,104 @@
-# Prezzi Mercato Elettrico GME — raccolta + dashboard
+# Prezzi Mercato Elettrico Italiano (GME)
 
-Sistema minimo per scaricare quotidianamente i prezzi di tutti i mercati
-elettrici italiani (GME) e vederli in un grafico raggiungibile con un link,
-senza dipendere dal tuo PC essere acceso.
+Raccolta automatica e dashboard dei prezzi zonali orari del mercato del
+giorno prima (MGP) dell'energia elettrica italiana, pubblicati dal
+Gestore dei Mercati Energetici (GME) e ripresi ufficialmente dalla
+piattaforma europea ENTSO-E Transparency Platform.
 
-## Come funziona
+> **Nota:** il progetto usava inizialmente la libreria non ufficiale
+> `mercati-energetici`, basata su un endpoint privato dell'app mobile GME.
+> Quell'endpoint è stato dismesso/protetto e il progetto upstream è stato
+> archiviato dal maintainer il 12/08/2025: non funziona più per nessuno.
+> Per questo la raccolta dati ora usa l'API ufficiale ENTSO-E, che copre
+> il mercato del giorno prima (equivalente MGP) ma non i mercati
+> infragiornalieri MI1-MI7 che forniva la vecchia fonte.
 
-- `fetch_prices.py`: scarica i prezzi da tutti i mercati GME (MGP, MI1-MI7...)
-  usando la libreria non ufficiale `mercati-energetici`. Ogni volta che gira,
-  controlla l'ultima data già salvata e recupera automaticamente tutti i
-  giorni mancanti fino a oggi (quindi nessuna perdita dati se salta un run).
-- `.github/workflows/daily_fetch.yml`: fa girare lo script ogni giorno sui
-  server di GitHub (gratuito), non sul tuo computer. Salva i dati aggiornati
-  in `data/prezzi_zonali.csv` dentro il repository stesso.
-- `app.py`: dashboard Streamlit che legge quel CSV e mostra i grafici.
-  Pubblicata su Streamlit Community Cloud, ottieni un link pubblico che si
-  aggiorna da solo ogni volta che arrivano nuovi dati.
+## Cosa fa
 
-## Setup (stasera, ~20-30 minuti)
+- Una volta al giorno (tramite GitHub Actions), dopo che il mercato del
+  giorno prima ha pubblicato i risultati, scarica da ENTSO-E i prezzi di
+  tutte le 7 zone di mercato italiane. Dal 2025-10-01 questo mercato
+  pubblica a risoluzione di 15 minuti (96 valori/giorno) invece che
+  oraria — è una proprietà del dato, non della frequenza di raccolta:
+  un solo download al giorno è sufficiente, la pubblicazione stessa
+  avviene una volta al giorno.
+- Accumula **tutto** lo storico raccolto in un unico dataset
+  (`data/prezzi_zonali.csv`), senza mai scartare dati: è pensato come una
+  campagna di raccolta continua, non solo come cache degli ultimi giorni.
+- Registra anche l'orario dell'ultima esecuzione della pipeline
+  (`data/last_update.json`).
+- Mostra i dati raccolti in una dashboard web interattiva, che si
+  aggiorna da sola ogni 15 minuti — non per riscaricare dati, ma solo per
+  far avanzare la linea "Adesso" nel grafico e rileggere il CSV nel caso
+  sia arrivato un aggiornamento.
 
-1. **Crea un repository GitHub** (pubblico, gratuito) e carica tutti questi
-   file mantenendo la struttura delle cartelle (incluso `.github/workflows/`).
+## Come è organizzato
 
-2. **Attiva GitHub Actions**: di solito è già attivo di default sui repo
-   pubblici. Vai su "Actions" nel repo, dovresti vedere il workflow
-   "Aggiorna prezzi GME". Lancialo manualmente una prima volta ("Run workflow")
-   per popolare subito `data/prezzi_zonali.csv` invece di aspettare il cron
-   delle 14:00 UTC.
+| File | Cosa fa |
+|---|---|
+| `fetch_prices.py` | Scarica i prezzi da ENTSO-E (una volta al giorno) e li aggiunge al dataset |
+| `app.py` | Dashboard web (Streamlit), si auto-aggiorna ogni 15 minuti |
+| `requirements.txt` | Librerie Python necessarie |
+| `.github/workflows/daily_fetch.yml` | Esegue `fetch_prices.py` una volta al giorno |
+| `data/prezzi_zonali.csv` | L'intero storico raccolto (creato al primo utilizzo) |
+| `data/last_update.json` | Orario dell'ultima esecuzione della pipeline |
 
-3. **Pubblica la dashboard**: vai su https://share.streamlit.io , collega il
-   tuo account GitHub, seleziona questo repository e il file `app.py`.
-   In un paio di minuti ottieni un URL pubblico (tipo
-   `https://tuonome-tuoprogetto.streamlit.app`) che puoi aprire da qualunque
-   dispositivo. Si aggiorna da solo ogni volta che il workflow fa un nuovo
-   commit dei dati.
+## Aggiornamento dei dati
 
-## Nota importante sul primo avvio
+La pipeline gira da sola una volta al giorno (14:00 UTC, dopo la
+pubblicazione dei risultati), senza bisogno di intervento manuale. Se un
+run salta per qualche motivo, quello successivo recupera automaticamente
+tutti i giorni mancanti: non è necessario monitorarlo attivamente.
 
-Non conoscendo lo schema esatto restituito dall'API GME per ogni mercato
-(la libreria non documenta il formato in dettaglio), `fetch_prices.py` e
-`app.py` sono scritti per adattarsi automaticamente alle colonne che
-arrivano davvero (via `pandas.json_normalize` e rilevamento dinamico delle
-colonne numeriche). Dopo il primo run reale, conviene dare un'occhiata al
-CSV generato e, se serve, rifinire i nomi delle colonne nella dashboard:
-è il punto giusto per aprire questo progetto in Claude Code e chiedere
-di sistemare i dettagli sulla base dei dati veri.
+La dashboard invece si aggiorna ogni 15 minuti per conto proprio (un
+refresh lato pagina, non un nuovo download): serve solo a far avanzare la
+linea "Adesso" nel grafico e a mostrare subito eventuali dati arrivati
+nel frattempo, non a interrogare ENTSO-E più spesso.
 
-## Il problema "PC spento" — come è risolto
+## Usare la dashboard
 
-Niente gira più in locale: lo scheduler (GitHub Actions) e la dashboard
-(Streamlit Cloud) sono entrambi servizi cloud gratuiti, sempre attivi,
-indipendenti dal tuo computer. Il tuo PC serve solo per scrivere il codice,
-non per farlo girare.
+La dashboard mostra due controlli:
+- **Mercato**: quale segmento di mercato visualizzare (al momento solo MGP)
+- **Zone**: quali zone di mercato (Nord, Centro-Sud, Sicilia, ecc.)
+  mostrare nel grafico, selezionabili singolarmente
+
+Il grafico mostra di default gli ultimi 6 giorni più il giorno successivo
+(il "giorno prima" pubblicato oggi per domani), con uno stile tratteggiato
+che distingue i prezzi già storicizzati da quelli del giorno-prima appena
+pubblicato, e una linea verticale "Adesso" che segna il momento preciso
+in cui stai guardando la dashboard (avanza ogni 15 minuti). Questa è solo
+una finestra di visualizzazione: l'intero storico raccolto dalla campagna
+resta sempre disponibile, senza filtri, nella tabella "Dati grezzi" in
+fondo alla pagina.
+
+## Ottenere un token API ENTSO-E (gratuito)
+
+1. Vai su https://transparency.entsoe.eu, clicca "Sign In" > "Register" e
+   crea un account (poi verificalo tramite il link inviato via email).
+2. Invia una email a **transparency@entsoe.eu** con oggetto
+   **"RESTful API access"** e nel corpo l'indirizzo email con cui ti sei
+   registrato.
+3. Attendi l'email di conferma (di norma entro 3 giorni lavorativi).
+4. Rientra su transparency.entsoe.eu, vai su "My Account" e genera un
+   Security Token: sarà il valore da usare come `ENTSOE_API_TOKEN`.
+
+## Eseguire il progetto in locale
+
+pip install -r requirements.txt
+ENTSOE_API_TOKEN=<il-tuo-token> python fetch_prices.py   # scarica/aggiorna il dataset
+streamlit run app.py                                      # apre la dashboard in locale
+
+## Configurare GitHub Actions
+
+Nel repository GitHub, vai su Settings > Secrets and variables > Actions
+e crea un secret chiamato `ENTSOE_API_TOKEN` con il token ottenuto sopra.
+Il workflow `.github/workflows/daily_fetch.yml` lo legge automaticamente.
+
+## Fonte dei dati
+
+I dati provengono dalla ENTSO-E Transparency Platform (piattaforma
+ufficiale europea di trasparenza dei mercati elettrici), a cui il GME
+trasmette gli esiti del mercato del giorno prima. Il GME e' l'ente che
+gestisce i mercati elettrici italiani; non va confuso con il GSE
+(Gestore Servizi Energetici), che si occupa invece di incentivi alle
+rinnovabili.
