@@ -81,7 +81,7 @@ with col2:
         c for c in df_mercato.columns
         if c not in ("data", "ora", "utc", "mercato", "datetime") and df_mercato[c].dtype != object
     ]
-    zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona[:3])
+    zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
 
 # Finestra di default mostrata: gli ultimi N giorni di dati "storici" più
 # il giorno successivo (il mercato del giorno prima pubblica oggi i prezzi
