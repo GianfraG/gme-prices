@@ -13,10 +13,16 @@ st.set_page_config(page_title="Prezzi Mercato Elettrico GME", layout="wide")
 # ri-scaricare nulla lato dashboard.
 st.markdown('<meta http-equiv="refresh" content="900">', unsafe_allow_html=True)
 
-st.title("Prezzi Mercato Elettrico Italiano (GME)")
+st.title("foresee")
+st.markdown(
+    "<p style='margin-top:-12px; color:gray; font-size:1.1rem;'>"
+    "Italian zone electricity prices</p>",
+    unsafe_allow_html=True,
+)
 
 DATA_FILE = "data/prezzi_zonali.csv"
 LAST_UPDATE_FILE = "data/last_update.json"
+GITHUB_REPO_URL = "https://github.com/GianfraG/gme-prices"
 TZ = "Europe/Rome"
 GIORNI_STORICO_MOSTRATI = 6  # più il giorno successivo (day-ahead), se pubblicato
 
@@ -55,8 +61,7 @@ info_col1, info_col2 = st.columns(2)
 with info_col1:
     st.caption(
         f"Dati disponibili fino al: **{df['datetime'].max().strftime('%d/%m/%Y %H:%M')}** "
-        f"— {len(df)} righe raccolte in totale dall'inizio della campagna "
-        f"({df['data'].min().strftime('%d/%m/%Y')})"
+        f"— campagna di raccolta dati dal {df['data'].min().strftime('%d/%m/%Y')}"
     )
 with info_col2:
     if ultimo_controllo:
@@ -78,19 +83,21 @@ with col2:
     ]
     zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona[:3])
 
-# Finestra di default mostrata nel grafico: gli ultimi N giorni di dati
-# "storici" più il giorno successivo (il mercato del giorno prima pubblica
-# oggi i prezzi di domani). Tutto lo storico raccolto resta comunque intero
-# nel CSV e nella tabella "Dati grezzi" qui sotto: qui si filtra solo la vista.
+# Finestra di default mostrata: gli ultimi N giorni di dati "storici" più
+# il giorno successivo (il mercato del giorno prima pubblica oggi i prezzi
+# di domani). Tutto lo storico raccolto resta comunque intero nel CSV su
+# GitHub: qui (grafico e tabella qui sotto) si filtra solo la vista.
 adesso = pd.Timestamp.now(tz=TZ).tz_localize(None)  # avanza ad ogni refresh della dashboard
 oggi = adesso.normalize()  # confine di calendario tra "storico" e "giorno-prima"
 inizio_finestra = oggi - pd.Timedelta(days=GIORNI_STORICO_MOSTRATI - 1)
 fine_finestra = oggi + pd.Timedelta(days=2) - pd.Timedelta(minutes=1)  # fino a fine "domani"
 
+df_finestra = df_mercato[
+    (df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_finestra)
+]
+
 if zone_sel:
-    plot_df = df_mercato[
-        (df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_finestra)
-    ].melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
+    plot_df = df_finestra.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
     plot_df["periodo"] = plot_df["datetime"].apply(
         lambda dt: "Giorno-prima (domani)" if dt.normalize() > oggi else "Storico"
     )
@@ -114,5 +121,10 @@ if zone_sel:
 else:
     st.info("Seleziona almeno una zona per vedere il grafico.")
 
-with st.expander(f"Dati grezzi — intera campagna di raccolta ({len(df_mercato)} righe)"):
-    st.dataframe(df_mercato, use_container_width=True)
+with st.expander("Dati grezzi — stessa finestra mostrata nel grafico"):
+    st.dataframe(
+        df_finestra.drop(columns="datetime"), use_container_width=True,
+    )
+    st.caption(
+        f"Storico completo della campagna di raccolta su GitHub: {GITHUB_REPO_URL}"
+    )
