@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="foresee — Italian zone electricity prices", layout="wide")
+st.set_page_config(page_title="foresee — Italian zone electricity prices", layout="wide", page_icon="⚡")
 
 # La raccolta dati (fetch_prices.py) gira una volta al giorno: questo
 # auto-refresh serve solo a far avanzare la linea "Adesso" nel grafico e a
@@ -14,22 +14,53 @@ st.set_page_config(page_title="foresee — Italian zone electricity prices", lay
 # ri-scaricare nulla lato dashboard.
 st.markdown('<meta http-equiv="refresh" content="900">', unsafe_allow_html=True)
 
-st.title("foresee")
-st.markdown(
-    "<p style='margin-top:-12px; color:gray; font-size:1.1rem;'>"
-    "Italian zone electricity prices</p>",
-    unsafe_allow_html=True,
-)
-
 DATA_FILE = "data/prezzi_zonali.csv"
 LAST_UPDATE_FILE = "data/last_update.json"
 GITHUB_REPO_URL = "https://github.com/GianfraG/gme-prices"
 TZ = "Europe/Rome"
 MERCATO = "MGP"  # unica fonte oggi (ENTSO-E non espone i mercati infragiornalieri)
 GIORNI_STORICO_MOSTRATI = 3  # più domani (tratteggiato) più dopodomani (spazio vuoto)
-PALETTE = px.colors.qualitative.Plotly
 
-st.caption(f"Codice e storico completo della campagna di raccolta su [GitHub]({GITHUB_REPO_URL})")
+# Palette categoriale (validata per contrasto/daltonismo), ordine fisso non ciclico
+ZONE_COLORS = {
+    "NORD": "#3987e5",  # blue
+    "CNOR": "#d95926",  # orange
+    "CSUD": "#199e70",  # aqua
+    "SUD": "#c98500",   # yellow
+    "SICI": "#d55181",  # magenta
+    "SARD": "#008300",  # green
+    "CALA": "#9085e9",  # violet
+}
+INK_SECONDARY = "#c3c2b7"
+INK_MUTED = "#898781"
+GRID = "#2c2c2a"
+AXIS = "#383835"
+
+CHART_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
+    margin=dict(t=40, l=10, r=10, b=10),
+    hovermode="x unified",
+)
+AXIS_STYLE = dict(gridcolor=GRID, linecolor=AXIS, tickfont=dict(color=INK_MUTED), zeroline=False)
+
+st.markdown(
+    f"""
+    <h1 style="font-size:2.6rem; font-weight:800; letter-spacing:-0.02em; margin-bottom:0;">foresee</h1>
+    <p style="color:{INK_SECONDARY}; font-size:1.05rem; margin-top:0; margin-bottom:0.4rem;">
+      Italian zone electricity prices
+    </p>
+    <p style="color:{INK_MUTED}; font-size:0.85rem; margin-bottom:1.4rem;">
+      <a href="{GITHUB_REPO_URL}" style="color:{ZONE_COLORS['NORD']}; text-decoration:none; font-weight:600;">
+        GianfraG/gme-prices
+      </a>
+      &nbsp;·&nbsp;codice e storico completo della campagna di raccolta
+    </p>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data(ttl=300)
@@ -83,7 +114,6 @@ colonne_zona = [
     if c not in ("data", "ora", "utc", "mercato", "datetime") and df_mercato[c].dtype != object
 ]
 zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
-colore_zona = {zona: PALETTE[i % len(PALETTE)] for i, zona in enumerate(zone_sel)}
 
 # Finestra mostrata: gli ultimi N giorni "storici" (oggi incluso) + domani
 # (tratteggiato, il giorno-prima pubblicato oggi) + dopodomani lasciato
@@ -91,7 +121,7 @@ colore_zona = {zona: PALETTE[i % len(PALETTE)] for i, zona in enumerate(zone_sel
 # Tutto lo storico raccolto resta comunque intero nel CSV su GitHub: qui
 # (grafico e tabella qui sotto) si filtra solo la vista.
 adesso = pd.Timestamp.now(tz=TZ).tz_localize(None)  # avanza ad ogni refresh della dashboard
-oggi = adesso.normalize()  # confine di calendario tra "storico" e "giorno-prima"
+oggi = adesso.normalize()
 inizio_finestra = oggi - pd.Timedelta(days=GIORNI_STORICO_MOSTRATI - 1)
 fine_domani = oggi + pd.Timedelta(days=2) - pd.Timedelta(minutes=1)  # fine di "domani"
 fine_dopodomani = oggi + pd.Timedelta(days=3) - pd.Timedelta(minutes=1)  # per lo spazio vuoto
@@ -99,6 +129,8 @@ fine_dopodomani = oggi + pd.Timedelta(days=3) - pd.Timedelta(minutes=1)  # per l
 df_finestra = df_mercato[
     (df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)
 ]
+
+st.markdown("#### Andamento prezzi")
 
 if zone_sel:
     if df_finestra.empty:
@@ -109,40 +141,39 @@ if zone_sel:
     else:
         fig = go.Figure()
         for zona in zone_sel:
+            colore = ZONE_COLORS.get(zona, INK_SECONDARY)
             serie = df_finestra[["datetime", zona]].dropna().sort_values("datetime")
-            storico = serie[serie["datetime"] <= oggi]
-            domani = serie[serie["datetime"] > oggi]
-            if not storico.empty and not domani.empty:
-                # Ripete l'ultimo punto storico come primo punto della tratta
-                # tratteggiata, cosi' le due linee restano visivamente connesse.
-                domani = pd.concat([storico.iloc[[-1]], domani], ignore_index=True)
-            colore = colore_zona[zona]
-            if not storico.empty:
+            # Il confine tra continuo e tratteggiato e' l'istante esatto di
+            # "adesso" (cio' che e' gia' accaduto vs cio' che deve ancora
+            # accadere), non il confine di calendario tra oggi e domani.
+            avvenuto = serie[serie["datetime"] <= adesso]
+            futuro = serie[serie["datetime"] > adesso]
+            if not avvenuto.empty and not futuro.empty:
+                # Ripete l'ultimo punto avvenuto come primo punto della tratta
+                # futura, cosi' le due linee restano visivamente connesse.
+                futuro = pd.concat([avvenuto.iloc[[-1]], futuro], ignore_index=True)
+            hover = "%{y:.1f} €/MWh<extra>" + zona + "</extra>"
+            if not avvenuto.empty:
                 fig.add_trace(go.Scatter(
-                    x=storico["datetime"], y=storico[zona], mode="lines", name=zona,
-                    legendgroup=zona, line=dict(color=colore),
+                    x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
+                    legendgroup=zona, line=dict(color=colore, width=2), hovertemplate=hover,
                 ))
-            if not domani.empty:
+            if not futuro.empty:
                 fig.add_trace(go.Scatter(
-                    x=domani["datetime"], y=domani[zona], mode="lines", name=zona,
-                    legendgroup=zona, showlegend=storico.empty,
-                    line=dict(color=colore, dash="dot"),
+                    x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
+                    legendgroup=zona, showlegend=avvenuto.empty,
+                    line=dict(color=colore, width=2, dash="dot"), hovertemplate=hover,
                 ))
 
-        fig.add_vline(
-            x=adesso, line_dash="dot", line_color="gray",
-            annotation_text=f"Adesso {adesso.strftime('%H:%M')}",
-        )
+        fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED)
         fig.add_annotation(
             x=oggi + pd.Timedelta(days=2.5), y=0.5, yref="paper",
-            text="Previsioni<br>(prossimamente)", showarrow=False,
-            font=dict(color="lightgray", size=12),
+            text="previsioni<br>in arrivo", showarrow=False,
+            font=dict(color=INK_MUTED, size=12),
         )
-        fig.update_xaxes(range=[inizio_finestra, fine_dopodomani], title_text="Data")
-        fig.update_yaxes(title_text="€/MWh")
-        fig.update_layout(
-            title=f"Andamento prezzi — {MERCATO} (ultimi {GIORNI_STORICO_MOSTRATI} giorni + domani)",
-        )
+        fig.update_xaxes(range=[inizio_finestra, fine_dopodomani], **AXIS_STYLE)
+        fig.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
+        fig.update_layout(**CHART_LAYOUT, height=460)
         st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Seleziona almeno una zona per vedere il grafico.")
@@ -150,22 +181,30 @@ else:
 with st.expander("Dati grezzi — stessa finestra mostrata nel grafico"):
     st.dataframe(df_finestra.drop(columns="datetime"), use_container_width=True)
 
-st.subheader("Distribuzione mensile dei prezzi (ultimi 2 anni)")
+st.markdown("#### Distribuzione mensile dei prezzi")
+
 due_anni_fa = oggi - pd.DateOffset(years=2)
 df_2anni = df_mercato[(df_mercato["datetime"] >= due_anni_fa) & (df_mercato["datetime"] <= adesso)]
 
 if zone_sel:
     if df_2anni.empty:
-        st.info("Nessun dato storico disponibile negli ultimi 2 anni per le zone selezionate.")
+        st.info("Nessun dato storico disponibile per le zone selezionate.")
     else:
         box_df = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
         box_df["mese"] = box_df["datetime"].dt.strftime("%Y-%m")
         fig_box = px.box(
             box_df, x="mese", y="prezzo", color="zona",
-            color_discrete_map=colore_zona,
-            labels={"prezzo": "€/MWh", "mese": "Mese", "zona": "Zona"},
+            color_discrete_map=ZONE_COLORS,
+            labels={"prezzo": "€/MWh", "mese": "", "zona": "Zona"},
         )
-        fig_box.update_xaxes(tickangle=45)
+        # Solo SUD visibile di default: le altre restano in legenda,
+        # cliccabili per essere mostrate a piacere.
+        fig_box.for_each_trace(
+            lambda t: t.update(visible=True if t.name == "SUD" else "legendonly")
+        )
+        fig_box.update_xaxes(tickangle=45, **AXIS_STYLE)
+        fig_box.update_yaxes(**AXIS_STYLE)
+        fig_box.update_layout(**CHART_LAYOUT, height=460)
         st.plotly_chart(fig_box, use_container_width=True)
 else:
     st.info("Seleziona almeno una zona per vedere la distribuzione mensile.")
