@@ -2,15 +2,18 @@ name: Aggiorna prezzi GME
 
 on:
   schedule:
-    # Una volta al giorno alle 14:00 UTC (metà pomeriggio ora italiana),
-    # dopo che il mercato del giorno prima ha pubblicato i risultati
-    # (di norma entro le 13:00 CET). Il dataset ha risoluzione di 15
-    # minuti, ma questo riguarda la granularità dei prezzi pubblicati,
-    # non la frequenza con cui vale la pena controllarli: un solo run al
-    # giorno basta, la dashboard si occupa poi di aggiornarsi visivamente
-    # (vedi app.py). La logica di recupero automatico in fetch_prices.py
-    # copre eventuali run saltati.
-    - cron: "0 14 * * *"
+    # Una volta al giorno alle 13:00 UTC (14:00-15:00 ora italiana a
+    # seconda della stagione), circa un'ora dopo la pubblicazione
+    # regolare degli esiti del mercato del giorno prima (12:55 CET),
+    # con margine di sicurezza per eventuali ritardi occasionali. Il
+    # dataset ha risoluzione di 15 minuti, ma questo riguarda la
+    # granularità dei prezzi pubblicati, non la frequenza con cui vale
+    # la pena controllarli (i prezzi non cambiano più una volta
+    # pubblicati): un solo run al giorno basta, la dashboard si occupa
+    # poi di aggiornarsi visivamente (vedi app.py). La logica di
+    # recupero automatico in fetch_prices.py copre eventuali run saltati
+    # o giorni in cui la pubblicazione arriva più tardi del previsto.
+    - cron: "0 13 * * *"
   workflow_dispatch: {}  # permette anche di lanciarlo manualmente da GitHub
 
 jobs:

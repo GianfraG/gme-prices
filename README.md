@@ -45,8 +45,9 @@ piattaforma europea ENTSO-E Transparency Platform.
 
 ## Aggiornamento dei dati
 
-La pipeline gira da sola una volta al giorno (14:00 UTC, dopo la
-pubblicazione dei risultati), senza bisogno di intervento manuale. Se un
+La pipeline gira da sola una volta al giorno (13:00 UTC, circa un'ora
+dopo la pubblicazione regolare dei risultati alle 12:55 CET), senza
+bisogno di intervento manuale. Se un
 run salta per qualche motivo, quello successivo recupera automaticamente
 tutti i giorni mancanti: non è necessario monitorarlo attivamente.
 
