@@ -178,7 +178,7 @@ if zone_sel:
 else:
     st.info("Seleziona almeno una zona per vedere il grafico.")
 
-with st.expander("Dati grezzi — stessa finestra mostrata nel grafico"):
+with st.expander("Dati grezzi"):
     st.dataframe(df_finestra.drop(columns="datetime"), use_container_width=True)
 
 st.markdown("#### Distribuzione mensile dei prezzi")
@@ -190,20 +190,44 @@ if zone_sel:
     if df_2anni.empty:
         st.info("Nessun dato storico disponibile per le zone selezionate.")
     else:
-        box_df = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
-        box_df["mese"] = box_df["datetime"].dt.strftime("%Y-%m")
-        fig_box = px.box(
-            box_df, x="mese", y="prezzo", color="zona",
-            color_discrete_map=ZONE_COLORS,
-            labels={"prezzo": "€/MWh", "mese": "", "zona": "Zona"},
-        )
-        # Solo SUD visibile di default: le altre restano in legenda,
-        # cliccabili per essere mostrate a piacere.
-        fig_box.for_each_trace(
-            lambda t: t.update(visible=True if t.name == "SUD" else "legendonly")
-        )
+        box_long = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
+        box_long["mese"] = box_long["datetime"].dt.strftime("%Y-%m")
+
+        # Statistiche pre-calcolate lato server (quartili/baffi per zona/mese,
+        # convenzione Tukey 1.5*IQR): al grafico arrivano ~168 righe aggregate
+        # invece di ~300.000 punti grezzi, molto piu' leggero da renderizzare
+        # nel browser (tutto vettorizzato con pandas, niente loop Python).
+        grouped = box_long.groupby(["zona", "mese"])["prezzo"]
+        stats = grouped.quantile(0.25).rename("q1").reset_index()
+        stats["mediana"] = grouped.median().values
+        stats["q3"] = grouped.quantile(0.75).values
+        iqr = stats["q3"] - stats["q1"]
+        stats["_lo_fence"] = stats["q1"] - 1.5 * iqr
+        stats["_hi_fence"] = stats["q3"] + 1.5 * iqr
+
+        entro_baffi = box_long.merge(stats[["zona", "mese", "_lo_fence", "_hi_fence"]], on=["zona", "mese"])
+        entro_baffi = entro_baffi[
+            (entro_baffi["prezzo"] >= entro_baffi["_lo_fence"]) & (entro_baffi["prezzo"] <= entro_baffi["_hi_fence"])
+        ]
+        baffi = entro_baffi.groupby(["zona", "mese"])["prezzo"].agg(baffo_min="min", baffo_max="max").reset_index()
+        stats = stats.merge(baffi, on=["zona", "mese"], how="left").sort_values("mese")
+        stats["baffo_min"] = stats["baffo_min"].fillna(stats["q1"])
+        stats["baffo_max"] = stats["baffo_max"].fillna(stats["q3"])
+
+        fig_box = go.Figure()
+        for zona in zone_sel:
+            sub = stats[stats["zona"] == zona]
+            fig_box.add_trace(go.Box(
+                x=sub["mese"], q1=sub["q1"], median=sub["mediana"], q3=sub["q3"],
+                lowerfence=sub["baffo_min"], upperfence=sub["baffo_max"],
+                name=zona, marker_color=ZONE_COLORS.get(zona, INK_SECONDARY),
+                # Solo SUD visibile di default: le altre restano in legenda,
+                # cliccabili per essere mostrate a piacere.
+                visible=True if zona == "SUD" else "legendonly",
+            ))
+        fig_box.update_layout(boxmode="group")
         fig_box.update_xaxes(tickangle=45, **AXIS_STYLE)
-        fig_box.update_yaxes(**AXIS_STYLE)
+        fig_box.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
         fig_box.update_layout(**CHART_LAYOUT, height=460)
         st.plotly_chart(fig_box, use_container_width=True)
 else:
