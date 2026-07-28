@@ -18,7 +18,12 @@ on:
     # GitHub stesso segnala che gli schedule allo scoccare dell'ora sono
     # i piu' soggetti a ritardi o a essere del tutto saltati, perche' e'
     # l'istante in cui si accumulano piu' richieste da tutti gli utenti.
-    - cron: "7 13 * * *"
+    #
+    # TEST TEMPORANEO 2026-07-28: cron spostato a 13:53 UTC solo per
+    # verificare che lo schedule automatico scatti davvero da solo,
+    # dopo che quello delle 13:00 di oggi non e' partito. Da ripristinare
+    # (e da estendere con 2-3 orari ridondanti) una volta verificato.
+    - cron: "53 13 * * *"
   workflow_dispatch: {}  # permette anche di lanciarlo manualmente da GitHub
 
 jobs:
