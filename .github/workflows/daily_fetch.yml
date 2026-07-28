@@ -2,7 +2,7 @@ name: Aggiorna prezzi GME
 
 on:
   schedule:
-    # Una volta al giorno alle 13:00 UTC (14:00-15:00 ora italiana a
+    # Una volta al giorno alle 13:07 UTC (14:07-15:07 ora italiana a
     # seconda della stagione), circa un'ora dopo la pubblicazione
     # regolare degli esiti del mercato del giorno prima (12:55 CET),
     # con margine di sicurezza per eventuali ritardi occasionali. Il
@@ -13,7 +13,12 @@ on:
     # poi di aggiornarsi visivamente (vedi app.py). La logica di
     # recupero automatico in fetch_prices.py copre eventuali run saltati
     # o giorni in cui la pubblicazione arriva più tardi del previsto.
-    - cron: "0 13 * * *"
+    #
+    # Orario deliberatamente NON in punta d'ora (":07" invece di ":00"):
+    # GitHub stesso segnala che gli schedule allo scoccare dell'ora sono
+    # i piu' soggetti a ritardi o a essere del tutto saltati, perche' e'
+    # l'istante in cui si accumulano piu' richieste da tutti gli utenti.
+    - cron: "7 13 * * *"
   workflow_dispatch: {}  # permette anche di lanciarlo manualmente da GitHub
 
 jobs:
