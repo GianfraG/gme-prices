@@ -15,13 +15,13 @@ piattaforma europea ENTSO-E Transparency Platform.
 
 ## Cosa fa
 
-- Una volta al giorno (tramite GitHub Actions), dopo che il mercato del
-  giorno prima ha pubblicato i risultati, scarica da ENTSO-E i prezzi di
-  tutte le 7 zone di mercato italiane. Dal 2025-10-01 questo mercato
-  pubblica a risoluzione di 15 minuti (96 valori/giorno) invece che
-  oraria — è una proprietà del dato, non della frequenza di raccolta:
-  un solo download al giorno è sufficiente, la pubblicazione stessa
-  avviene una volta al giorno.
+- Ogni giorno (tramite GitHub Actions), dopo che il mercato del giorno
+  prima ha pubblicato i risultati, scarica da ENTSO-E i prezzi di tutte
+  le 7 zone di mercato italiane. Dal 2025-10-01 questo mercato pubblica
+  a risoluzione di 15 minuti (96 valori/giorno) invece che oraria — è
+  una proprietà del dato, non della frequenza di raccolta: la
+  pubblicazione stessa avviene una volta al giorno, indipendentemente
+  da quante volte gira lo script (che è idempotente).
 - Accumula **tutto** lo storico raccolto in un unico dataset
   (`data/prezzi_zonali.csv`), senza mai scartare dati: è pensato come una
   campagna di raccolta continua, non solo come cache degli ultimi giorni.
@@ -39,17 +39,22 @@ piattaforma europea ENTSO-E Transparency Platform.
 | `fetch_prices.py` | Scarica i prezzi da ENTSO-E (una volta al giorno) e li aggiunge al dataset |
 | `app.py` | Dashboard web (Streamlit), si auto-aggiorna ogni 15 minuti |
 | `requirements.txt` | Librerie Python necessarie |
-| `.github/workflows/daily_fetch.yml` | Esegue `fetch_prices.py` una volta al giorno |
+| `.github/workflows/daily_fetch.yml` | Esegue `fetch_prices.py` 3 volte al giorno (ridondanza) |
 | `data/prezzi_zonali.csv` | L'intero storico raccolto (creato al primo utilizzo) |
 | `data/last_update.json` | Orario dell'ultima esecuzione della pipeline |
 
 ## Aggiornamento dei dati
 
-La pipeline gira da sola una volta al giorno (13:00 UTC, circa un'ora
-dopo la pubblicazione regolare dei risultati alle 12:55 CET), senza
-bisogno di intervento manuale. Se un
-run salta per qualche motivo, quello successivo recupera automaticamente
-tutti i giorni mancanti: non è necessario monitorarlo attivamente.
+La pipeline gira da sola 3 volte al giorno (13:07, 13:37 e 14:22 UTC —
+tutte dopo la pubblicazione regolare dei risultati alle 12:55 CET),
+senza bisogno di intervento manuale. Tre orari invece di uno solo
+perché GitHub Actions non garantisce l'esecuzione puntuale (a volte
+anche puntuale non è: un trigger schedulato può non scattare affatto
+per oltre un'ora, non solo essere in ritardo — verificato sul campo).
+`fetch_prices.py` è idempotente: se un run trova i dati già scaricati
+da un run precedente lo stesso giorno, non fa nulla. Se comunque un
+giorno intero salta, quello successivo recupera automaticamente tutti
+i giorni mancanti: non è necessario monitorarlo attivamente.
 
 La dashboard invece si aggiorna ogni 15 minuti per conto proprio (un
 refresh lato pagina, non un nuovo download): serve solo a far avanzare la
@@ -58,19 +63,24 @@ nel frattempo, non a interrogare ENTSO-E più spesso.
 
 ## Usare la dashboard
 
-La dashboard mostra due controlli:
-- **Mercato**: quale segmento di mercato visualizzare (al momento solo MGP)
-- **Zone**: quali zone di mercato (Nord, Centro-Sud, Sicilia, ecc.)
-  mostrare nel grafico, selezionabili singolarmente
+La dashboard mostra un controllo **Zone**: quali zone di mercato (Nord,
+Centro-Sud, Sicilia, ecc.) mostrare nei grafici, selezionabili
+singolarmente. Il mercato è sempre MGP (unica fonte disponibile oggi),
+quindi non c'è un selettore dedicato.
 
-Il grafico mostra di default gli ultimi 6 giorni più il giorno successivo
-(il "giorno prima" pubblicato oggi per domani), con uno stile tratteggiato
-che distingue i prezzi già storicizzati da quelli del giorno-prima appena
-pubblicato, e una linea verticale "Adesso" che segna il momento preciso
-in cui stai guardando la dashboard (avanza ogni 15 minuti). Questa è solo
-una finestra di visualizzazione: l'intero storico raccolto dalla campagna
-resta sempre disponibile, senza filtri, nella tabella "Dati grezzi" in
-fondo alla pagina.
+Il grafico principale mostra di default gli ultimi 3 giorni più il
+giorno successivo (il "giorno prima" pubblicato oggi per domani) più
+uno spazio vuoto per il giorno dopo ancora, riservato a un futuro
+modulo di previsione. La linea è continua per tutto ciò che è già
+avvenuto e tratteggiata per ciò che deve ancora avvenire, con il
+confine segnato da una linea verticale "Adesso" (avanza ogni 15
+minuti). È solo una finestra di visualizzazione: l'intero storico
+raccolto dalla campagna resta sempre disponibile, senza filtri, nella
+tabella "Dati grezzi" e nel repository GitHub linkato in alto.
+
+Più in basso, un secondo grafico mostra la distribuzione mensile dei
+prezzi (boxplot) sugli ultimi 2 anni per zona: di default è visibile
+solo la zona SUD, le altre restano in legenda e si attivano cliccandoci.
 
 ## Ottenere un token API ENTSO-E (gratuito)
 

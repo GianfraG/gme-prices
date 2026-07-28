@@ -2,28 +2,19 @@ name: Aggiorna prezzi GME
 
 on:
   schedule:
-    # Una volta al giorno alle 13:07 UTC (14:07-15:07 ora italiana a
-    # seconda della stagione), circa un'ora dopo la pubblicazione
-    # regolare degli esiti del mercato del giorno prima (12:55 CET),
-    # con margine di sicurezza per eventuali ritardi occasionali. Il
-    # dataset ha risoluzione di 15 minuti, ma questo riguarda la
-    # granularità dei prezzi pubblicati, non la frequenza con cui vale
-    # la pena controllarli (i prezzi non cambiano più una volta
-    # pubblicati): un solo run al giorno basta, la dashboard si occupa
-    # poi di aggiornarsi visivamente (vedi app.py). La logica di
-    # recupero automatico in fetch_prices.py copre eventuali run saltati
-    # o giorni in cui la pubblicazione arriva più tardi del previsto.
-    #
-    # Orario deliberatamente NON in punta d'ora (":07" invece di ":00"):
-    # GitHub stesso segnala che gli schedule allo scoccare dell'ora sono
-    # i piu' soggetti a ritardi o a essere del tutto saltati, perche' e'
-    # l'istante in cui si accumulano piu' richieste da tutti gli utenti.
-    #
-    # TEST TEMPORANEO 2026-07-28: cron spostato a 13:53 UTC solo per
-    # verificare che lo schedule automatico scatti davvero da solo,
-    # dopo che quello delle 13:00 di oggi non e' partito. Da ripristinare
-    # (e da estendere con 2-3 orari ridondanti) una volta verificato.
-    - cron: "53 13 * * *"
+    # Tre orari al giorno invece di uno solo, distanziati e volutamente
+    # fuori dalla punta d'ora (mai ":00"/":15"/":30"/":45"). Verificato
+    # sul campo il 2026-07-28: un singolo trigger schedulato (sia alle
+    # 13:00 che alle 13:53 UTC) puo' semplicemente non scattare affatto
+    # per oltre un'ora, non solo essere in ritardo - GitHub stesso non
+    # garantisce l'esecuzione puntuale degli schedule, specie nei
+    # minuti "tondi" dove si accumulano piu' richieste da tutti gli
+    # utenti insieme. fetch_prices.py e' idempotente: se un run trova
+    # i dati gia' scaricati da un run precedente lo stesso giorno, non
+    # fa nulla (nessun rischio di duplicati o sprechi rilevanti).
+    - cron: "7 13 * * *"   # ~1h dopo la pubblicazione (12:55 CET)
+    - cron: "37 13 * * *"  # backup +30 minuti
+    - cron: "22 14 * * *"  # backup +1h15m dal primo
   workflow_dispatch: {}  # permette anche di lanciarlo manualmente da GitHub
 
 jobs:
