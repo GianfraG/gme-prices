@@ -133,16 +133,17 @@ df_finestra = df_mercato[
 st.markdown("#### Andamento prezzi")
 
 if zone_sel:
-    if df_finestra.empty:
-        st.info(
-            f"Nessun dato nella finestra {inizio_finestra.strftime('%d/%m')} – "
-            f"{fine_domani.strftime('%d/%m')} per le zone selezionate."
-        )
+    if df_mercato.empty:
+        st.info("Nessun dato disponibile per le zone selezionate.")
     else:
         fig = go.Figure()
         for zona in zone_sel:
             colore = ZONE_COLORS.get(zona, INK_SECONDARY)
-            serie = df_finestra[["datetime", zona]].dropna().sort_values("datetime")
+            # Tutto lo storico (non solo la finestra di default): la vista
+            # iniziale del grafico resta gli ultimi giorni come prima, ma
+            # con il range slider sotto si puo' scorrere indietro a
+            # piacere su tutta la campagna di raccolta.
+            serie = df_mercato[["datetime", zona]].dropna().sort_values("datetime")
             # Il confine tra continuo e tratteggiato e' l'istante esatto di
             # "adesso" (cio' che e' gia' accaduto vs cio' che deve ancora
             # accadere), non il confine di calendario tra oggi e domani.
@@ -153,13 +154,16 @@ if zone_sel:
                 # futura, cosi' le due linee restano visivamente connesse.
                 futuro = pd.concat([avvenuto.iloc[[-1]], futuro], ignore_index=True)
             hover = "%{y:.1f} €/MWh<extra>" + zona + "</extra>"
+            # Scattergl (WebGL) invece di Scatter: con tutto lo storico
+            # caricato (decine di migliaia di punti per zona) resta fluido
+            # da spostare/zoomare nel range slider.
             if not avvenuto.empty:
-                fig.add_trace(go.Scatter(
+                fig.add_trace(go.Scattergl(
                     x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
                     legendgroup=zona, line=dict(color=colore, width=2), hovertemplate=hover,
                 ))
             if not futuro.empty:
-                fig.add_trace(go.Scatter(
+                fig.add_trace(go.Scattergl(
                     x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
                     legendgroup=zona, showlegend=avvenuto.empty,
                     line=dict(color=colore, width=2, dash="dot"), hovertemplate=hover,
@@ -171,9 +175,24 @@ if zone_sel:
             text="previsioni<br>in arrivo", showarrow=False,
             font=dict(color=INK_MUTED, size=12),
         )
-        fig.update_xaxes(range=[inizio_finestra, fine_dopodomani], **AXIS_STYLE)
+        fig.update_xaxes(
+            range=[inizio_finestra, fine_dopodomani],  # vista di default: invariata
+            rangeslider=dict(visible=True, thickness=0.08, bgcolor="rgba(255,255,255,0.03)", bordercolor=AXIS),
+            rangeselector=dict(
+                buttons=[
+                    dict(count=7, label="7g", step="day", stepmode="backward"),
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=3, label="3m", step="month", stepmode="backward"),
+                    dict(count=1, label="1a", step="year", stepmode="backward"),
+                    dict(step="all", label="Tutto"),
+                ],
+                bgcolor="rgba(255,255,255,0.06)", activecolor=ZONE_COLORS["NORD"],
+                font=dict(color=INK_SECONDARY, size=11),
+            ),
+            **AXIS_STYLE,
+        )
         fig.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
-        fig.update_layout(**CHART_LAYOUT, height=460)
+        fig.update_layout(**CHART_LAYOUT, height=540)
         st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Seleziona almeno una zona per vedere il grafico.")
