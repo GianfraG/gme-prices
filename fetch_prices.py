@@ -30,9 +30,11 @@ Caratteristiche chiave:
 - IDEMPOTENTE: se lo lanci più volte sullo stesso giorno, non duplica i dati.
 - AUTO-RIPARANTE: ogni esecuzione controlla qual è l'ultima data presente
   nel CSV e scarica tutti i giorni mancanti fino a oggi (incluso "domani",
-  se il mercato del giorno prima per domani è già stato pubblicato). Se lo
-  scheduler (GitHub Actions) salta un'esecuzione o il tuo PC è spento per
-  giorni, al run successivo il buco viene colmato da solo.
+  se il mercato del giorno prima per domani è già stato pubblicato), più un
+  margine di alcuni giorni indietro (GIORNI_MARGINE_RICONTROLLO) per colmare
+  automaticamente eventuali buchi dovuti a pubblicazioni in ritardo lato
+  ENTSO-E. Se lo scheduler (GitHub Actions) salta un'esecuzione o il tuo PC
+  è spento per giorni, al run successivo il buco viene colmato da solo.
 - Ad ogni esecuzione, riuscita o meno nel trovare dati nuovi, viene
   aggiornato `data/last_update.json` con l'orario dell'ultimo controllo.
   Lo script gira una volta al giorno (vedi workflow): la risoluzione a 15
@@ -72,6 +74,18 @@ MERCATO = "MGP"
 TZ = "Europe/Rome"
 
 MIN_START_DATE = date(2024, 1, 1)  # da dove partire se il CSV non esiste ancora
+
+# Margine di ri-controllo: quanti giorni PRIMA dell'ultima data presente nel
+# CSV vengono comunque richiesti di nuovo ad ogni run. Serve a colmare buchi
+# dovuti a pubblicazioni in ritardo da parte di ENTSO-E: se in un dato giorno
+# l'API restituisce un intervallo con un giorno mancante nel mezzo (es. il
+# 13/8 non ancora pubblicato mentre il 14/8 si', gia' successo in pratica),
+# il segnalibro (ultima data presente) avanzerebbe comunque fino al 14/8,
+# scavalcando per sempre il 13/8 - il codice controllava solo "ho ricevuto
+# qualcosa", non "ho ricevuto ogni giorno richiesto". Ri-controllando sempre
+# gli ultimi giorni (idempotente, non crea duplicati) un buco del genere
+# viene ritrovato e colmato automaticamente non appena il dato arriva.
+GIORNI_MARGINE_RICONTROLLO = 5
 
 
 def last_date_in_file():
@@ -160,7 +174,13 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
 
     last = last_date_in_file()
-    start = (last + timedelta(days=1)) if last else MIN_START_DATE
+    if last:
+        # Riparte qualche giorno prima dell'ultima data vista, per colmare
+        # automaticamente eventuali buchi da pubblicazioni in ritardo (vedi
+        # commento su GIORNI_MARGINE_RICONTROLLO). Mai prima di MIN_START_DATE.
+        start = max(MIN_START_DATE, last + timedelta(days=1) - timedelta(days=GIORNI_MARGINE_RICONTROLLO))
+    else:
+        start = MIN_START_DATE
     end = date.today() + timedelta(days=1)  # includi "domani" se già pubblicato
 
     if start > end:
