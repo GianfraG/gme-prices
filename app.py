@@ -49,6 +49,11 @@ AXIS_STYLE = dict(gridcolor=GRID, linecolor=AXIS, tickfont=dict(color=INK_MUTED)
 st.markdown(
     f"""
     <h1 style="font-size:2.6rem; font-weight:800; letter-spacing:-0.02em; margin-bottom:0;">foresee</h1>
+    <p style="margin-top:0.1rem; margin-bottom:0.3rem;">
+      <a href="https://www.foresee.energy" style="color:{ZONE_COLORS['NORD']}; text-decoration:none; font-weight:600;">
+        www.foresee.energy
+      </a>
+    </p>
     <p style="color:{INK_SECONDARY}; font-size:1.05rem; margin-top:0; margin-bottom:0.4rem;">
       Italian zone electricity prices
     </p>
