@@ -242,8 +242,9 @@ if opt is not None:
             g = prev_o[giorno == giorno.min()]
             kpi.append((f"SUD · previsione {g['datetime'].iloc[0].strftime('%d/%m')}", fmt_num(g["price_eur_mwh"].mean()),
                         "€/MWh", "media sulle ore previste"))
-    if meta_o.get("live_mae_7d_eur_mwh") is not None:
-        kpi.append(("Errore di previsione", fmt_num(meta_o["live_mae_7d_eur_mwh"]), "€/MWh",
+    mae_o = meta_o.get("forecast_mae_7d_eur_mwh", meta_o.get("live_mae_7d_eur_mwh"))
+    if mae_o is not None:
+        kpi.append(("Errore di previsione", fmt_num(mae_o), "€/MWh",
                     "MAE ultimi 7 giorni, zona SUD"))
 if kpi:
     html('<div class="fs-kpis">' + "".join(
@@ -262,7 +263,7 @@ html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for 
 html('<div class="fs-section"><p class="fs-eyebrow">Prezzi</p><p class="fs-h2">Andamento e previsione</p>'
      '<p class="fs-note">Linea continua: prezzi realizzati. Puntinato: prezzi MGP già pubblicati per il giorno '
      f'successivo. Oltre l\'ultimo giorno pubblicato: previsione per la zona {ZONA_PREVISTA} (tratteggio) con '
-     'intervallo di previsione all\'80% (area), stimato dagli errori storici del modello per anticipo e fascia oraria.</p></div>')
+     'intervallo di previsione all\'80% (area), stimato dagli errori storici per anticipo e fascia oraria.</p></div>')
 
 zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
 df_finestra = df_mercato[(df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)]
@@ -409,7 +410,7 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# 3. Ottimizzazione degli accumuli (receding horizon a 48 h)
+# 3. Ottimizzazione degli accumuli (orizzonte 48 h)
 # ---------------------------------------------------------------------------
 # I risultati arrivano dal branch "optimization-results" (un commit
 # sovrascritto ad ogni calcolo): i push frequenti non riavviano l'app e non
@@ -505,8 +506,8 @@ def _finalizza(fig, titoli_y, altezza):
 def sezione_ottimizzazione():
     html('<div class="fs-section"><p class="fs-eyebrow">Ottimizzazione operativa</p>'
          '<p class="fs-h2">Gestione predittiva degli accumuli</p>'
-         '<p class="fs-note">Model Predictive Control con orizzonte di 48 h e passo di 15 minuti, ricalcolato ogni '
-         '15 minuti (MILP, Gurobi). Accumulo termico con pompa di calore e batteria elettrica di un sito industriale; '
+         '<p class="fs-note">Pianificazione ottimizzata su orizzonte mobile di 48 h con passo di 15 minuti, '
+         'aggiornata ogni 15 minuti. Accumulo termico con pompa di calore e batteria elettrica di un sito industriale; '
          'prezzo di riferimento zona SUD (MGP pubblicato o previsto). Linea continua: esercizio realizzato; '
          'tratteggio: piano corrente. Profili di domanda del sito simulati.</p></div>')
     if opt is None:
@@ -519,14 +520,12 @@ def sezione_ottimizzazione():
 
     generato = pd.Timestamp(meta.get("generated_at")).tz_convert(TZ).tz_localize(None)
     eta_min = (adesso - generato).total_seconds() / 60
-    stato = meta.get("solver_status", "n/d")
-    chips = [(f"Aggiornato {generato.strftime('%d/%m %H:%M')}", "ok" if eta_min <= RISULTATI_VECCHI_MIN else "warn"),
-             ("Solver: " + ("ottimo" if stato == "optimal" else stato)
-              + (f" · gap {fmt_num(100 * meta['mip_gap'], 2)}%" if meta.get("mip_gap") is not None else ""),
-              "ok" if stato == "optimal" else "warn")]
-    if meta.get("solve_seconds") is not None:
-        chips.append((f"Tempo di calcolo {fmt_num(meta['solve_seconds'], 1)} s", ""))
-    chips.append((f"Modello prezzi {meta.get('price_model_version') or meta.get('price_model') or 'n/d'}", ""))
+    stato = meta.get("status", "n/d")
+    etichetta_stato = {"ok": "Piano aggiornato", "piano_precedente": "Piano precedente in uso"}.get(stato, "Stato n/d")
+    chips = [(f"Ultimo calcolo {generato.strftime('%d/%m %H:%M')}", "ok" if eta_min <= RISULTATI_VECCHI_MIN else "warn"),
+             (etichetta_stato, "ok" if stato == "ok" else "warn")]
+    if meta.get("price_forecast_version"):
+        chips.append((f"Previsione prezzi v. {meta['price_forecast_version']}", ""))
     if meta.get("price_steps_forecast") is not None:
         chips.append((f"Passi a prezzo previsto {meta['price_steps_forecast']}/{meta.get('horizon_steps', 192)}", ""))
     if meta.get("demand_is_simulated"):
