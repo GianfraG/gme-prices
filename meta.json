@@ -1,0 +1,14 @@
+{
+ "generated_at": "2026-10-31T20:30:23Z",
+ "horizon_start": "2026-10-31T20:30:00+00:00",
+ "step_minutes": 15,
+ "horizon_steps": 192,
+ "zone": "SUD",
+ "status": "ok",
+ "price_forecast_version": "31/10/2026 03:00",
+ "price_steps_forecast": 86,
+ "price_interval_coverage": 0.8,
+ "forecast_mae_7d_eur_mwh": 40.92,
+ "demand_is_simulated": true,
+ "issues_24h": 0
+}
