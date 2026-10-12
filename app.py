@@ -321,17 +321,17 @@ def _passato_futuro(storico, piano, colonna, adesso):
     return passato, futuro
 
 
-def _linea(fig, row, passato, futuro, colonna, nome, colore, unita, fill=None):
+def _linea(fig, row, passato, futuro, colonna, nome, colore, unita, fill=None, width=2, opacity=1.0):
     hover = "%{y:.1f} " + unita + "<extra>" + nome + "</extra>"
     if not passato.empty:
         fig.add_trace(go.Scatter(x=passato["datetime"], y=passato[colonna], mode="lines", name=nome,
-                                 legendgroup=nome, line=dict(color=colore, width=2), hovertemplate=hover,
-                                 fill=fill), row=row, col=1)
+                                 legendgroup=nome, line=dict(color=colore, width=width), hovertemplate=hover,
+                                 fill=fill, opacity=opacity), row=row, col=1)
     if not futuro.empty:
         fig.add_trace(go.Scatter(x=futuro["datetime"], y=futuro[colonna], mode="lines", name=nome,
                                  legendgroup=nome, showlegend=passato.empty,
-                                 line=dict(color=colore, width=2, dash="dot"), hovertemplate=hover,
-                                 fill=fill, opacity=0.8), row=row, col=1)
+                                 line=dict(color=colore, width=width, dash="dot"), hovertemplate=hover,
+                                 fill=fill, opacity=0.8 * opacity), row=row, col=1)
 
 
 def _barre(fig, row, passato, futuro, colonna, nome, colore, unita, segno=1):
@@ -368,7 +368,7 @@ def _prezzo(fig, row, storico, piano, adesso):
                                  hovertemplate="%{y:.1f} €/MWh<extra>SUD pubblicato</extra>"), row=row, col=1)
         if is_prev.any():
             fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines",
-                                     name="Prezzo SUD previsto (ML)", line=dict(color=INK_MUTED, width=2, dash="dash", shape="hv"),
+                                     name="Prezzo previsto (ML)", line=dict(color=INK_MUTED, width=2, dash="dash", shape="hv"),
                                      hovertemplate="%{y:.1f} €/MWh<extra>SUD previsto</extra>"), row=row, col=1)
 
 
@@ -381,7 +381,9 @@ def _finalizza(fig, adesso, n_righe, titoli_y, altezza):
     fig.add_annotation(x=adesso, y=1.0, yref="paper", text=f"Adesso {adesso.strftime('%H:%M')}", showarrow=False,
                        yanchor="bottom", font=dict(color=INK_MUTED, size=11))
     fig.update_layout(**CHART_LAYOUT, height=altezza, barmode="relative", bargap=0)
-    fig.update_layout(margin=dict(t=60, l=10, r=10, b=10))
+    fig.update_layout(margin=dict(t=60, l=10, r=10, b=10),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                                  bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
 
 
 def sezione_ottimizzazione():
@@ -433,18 +435,21 @@ def sezione_ottimizzazione():
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
                         row_heights=[0.25, 0.27, 0.22, 0.26])
     _prezzo(fig, 1, storico, piano, adesso)
+    # ordine di disegno: barre, poi pompa di calore (sottile: senza vincoli di
+    # tempo minimo di accensione il modello la modula a intermittenza), poi la
+    # domanda sopra a tutto
+    p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
+    _barre(fig, 2, p, f, "tes_scarica_kw", "Calore dallo storage", COL_STORAGE, "kW")
+    p, f = _passato_futuro(storico, piano, "hp_heat_kw", adesso)
+    _linea(fig, 2, p, f, "hp_heat_kw", "Calore dalla pompa di calore", COL_PDC, "kW", width=1, opacity=0.55)
     p, f = _passato_futuro(storico, piano, "heat_demand_kw", adesso)
     _linea(fig, 2, p, f, "heat_demand_kw", "Domanda termica", COL_DOMANDA, "kW")
-    p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
-    _barre(fig, 2, p, f, "tes_scarica_kw", "Calore fornito dallo storage", COL_STORAGE, "kW")
-    p, f = _passato_futuro(storico, piano, "hp_heat_kw", adesso)
-    _linea(fig, 2, p, f, "hp_heat_kw", "Calore prodotto dalla pompa di calore", COL_PDC, "kW")
     p, f = _passato_futuro(storico, piano, "tes_soc_pct", adesso)
-    _linea(fig, 3, p, f, "tes_soc_pct", "Carica storage termico", COL_SOC, "%")
+    _linea(fig, 3, p, f, "tes_soc_pct", "Stato di carica", COL_SOC, "%")
     p, f = _passato_futuro(storico, piano, "tes_carica_kw", adesso)
-    _barre(fig, 4, p, f, "tes_carica_kw", "Carica storage", COL_CARICA, "kW")
+    _barre(fig, 4, p, f, "tes_carica_kw", "Carica", COL_CARICA, "kW")
     p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
-    _barre(fig, 4, p, f, "tes_scarica_kw", "Scarica storage", COL_SCARICA, "kW", segno=-1)
+    _barre(fig, 4, p, f, "tes_scarica_kw", "Scarica", COL_SCARICA, "kW", segno=-1)
     _finalizza(fig, adesso, 4, ["€/MWh", "kW termici", "Carica %", "kW termici"], 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
@@ -459,11 +464,11 @@ def sezione_ottimizzazione():
     _linea(fig, 1, p, f, "el_demand_kw", "Domanda elettrica", COL_DOMANDA, "kW")
     _prezzo(fig, 2, storico, piano, adesso)
     p, f = _passato_futuro(storico, piano, "bess_soc_pct", adesso)
-    _linea(fig, 3, p, f, "bess_soc_pct", "Carica batteria", COL_SOC, "%")
+    _linea(fig, 3, p, f, "bess_soc_pct", "Stato di carica batteria", COL_SOC, "%")
     p, f = _passato_futuro(storico, piano, "bess_charge_kw", adesso)
-    _barre(fig, 4, p, f, "bess_charge_kw", "Carica batteria (kW)", COL_CARICA, "kW")
+    _barre(fig, 4, p, f, "bess_charge_kw", "Carica batteria", COL_CARICA, "kW")
     p, f = _passato_futuro(storico, piano, "bess_discharge_kw", adesso)
-    _barre(fig, 4, p, f, "bess_discharge_kw", "Scarica batteria (kW)", COL_SCARICA, "kW", segno=-1)
+    _barre(fig, 4, p, f, "bess_discharge_kw", "Scarica batteria", COL_SCARICA, "kW", segno=-1)
     _finalizza(fig, adesso, 4, ["kW elettrici", "€/MWh", "Carica %", "kW elettrici"], 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
