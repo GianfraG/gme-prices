@@ -1,80 +1,146 @@
 import json
 import os
+import urllib.request
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="foresee — Italian zone electricity prices", layout="wide", page_icon="⚡")
+st.set_page_config(
+    page_title="foresee — Prezzi zonali MGP",
+    layout="wide",
+    page_icon="assets/favicon.png" if os.path.exists("assets/favicon.png") else "⚡",
+)
 
 # La raccolta dati (fetch_prices.py) gira una volta al giorno: questo
-# auto-refresh serve solo a far avanzare la linea "Adesso" nel grafico e a
-# rileggere il CSV se nel frattempo è arrivato un aggiornamento, NON a
-# ri-scaricare nulla lato dashboard.
+# auto-refresh serve solo a far avanzare la linea "Adesso" e a rileggere i
+# file se nel frattempo è arrivato un aggiornamento, NON a scaricare nulla.
 st.markdown('<meta http-equiv="refresh" content="900">', unsafe_allow_html=True)
 
 DATA_FILE = "data/prezzi_zonali.csv"
 LAST_UPDATE_FILE = "data/last_update.json"
 GITHUB_REPO_URL = "https://github.com/GianfraG/gme-prices"
+SITE_URL = "https://foresee.energy"
 TZ = "Europe/Rome"
-MERCATO = "MGP"  # unica fonte oggi (ENTSO-E non espone i mercati infragiornalieri)
-GIORNI_STORICO_MOSTRATI = 3  # più domani (tratteggiato) più dopodomani (spazio vuoto)
+MERCATO = "MGP"
+GIORNI_STORICO_MOSTRATI = 3  # più domani (MGP pubblicato) e dopodomani (previsione)
+ZONA_PREVISTA = "SUD"        # zona per cui esistono previsione e ottimizzazione
 
-# Palette categoriale (validata per contrasto/daltonismo), ordine fisso non ciclico
+# Risultati dell'ottimizzazione: branch dedicato, letti via raw con cache breve
+RESULTS_BASE = os.environ.get(
+    "FORESEE_RESULTS_BASE",
+    "https://raw.githubusercontent.com/GianfraG/gme-prices/optimization-results",
+)
+RISULTATI_VECCHI_MIN = 45
+ORE_PASSATO = 24
+ORE_FUTURO = 48
+
+# --- Design tokens (marchio foresee: blu notte + turchese) -------------------
+BRAND = "#2dd4bf"
+BG = "#0a1620"
+SURFACE = "#0f2030"
+BORDER = "#1c3346"
+TEXT = "#e8eef3"
+INK_SECONDARY = "#b4c3cf"
+INK_MUTED = "#7b8fa1"
+GRID = "#162b3c"
+AXIS = "#29465c"
+FONT = "Helvetica Neue, Helvetica, Arial, sans-serif"
+
+# Palette categoriale delle zone (validata per contrasto/daltonismo), ordine fisso
 ZONE_COLORS = {
-    "NORD": "#3987e5",  # blue
-    "CNOR": "#d95926",  # orange
-    "CSUD": "#199e70",  # aqua
-    "SUD": "#c98500",   # yellow
-    "SICI": "#d55181",  # magenta
-    "SARD": "#008300",  # green
-    "CALA": "#9085e9",  # violet
+    "NORD": "#3987e5",
+    "CNOR": "#d95926",
+    "CSUD": "#199e70",
+    "SUD": "#c98500",
+    "SICI": "#d55181",
+    "SARD": "#008300",
+    "CALA": "#9085e9",
 }
-INK_SECONDARY = "#c3c2b7"
-INK_MUTED = "#898781"
-GRID = "#2c2c2a"
-AXIS = "#383835"
+COL_PREZZO = ZONE_COLORS["SUD"]
+COL_DOMANDA = INK_SECONDARY
+COL_PDC = ZONE_COLORS["NORD"]
+COL_STORAGE = ZONE_COLORS["CNOR"]
+COL_SOC = BRAND
+COL_RES = ZONE_COLORS["SARD"]
+COL_CARICA = ZONE_COLORS["CSUD"]
+COL_SCARICA = ZONE_COLORS["CNOR"]
+COL_TEMP_TES = ZONE_COLORS["SICI"]
+COL_TEMP_ARIA = ZONE_COLORS["CNOR"]
 
 CHART_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif"),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
+    font=dict(color=INK_SECONDARY, family=FONT, size=12),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
     margin=dict(t=40, l=10, r=10, b=10),
     hovermode="x unified",
+    hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(family=FONT, color=TEXT, size=12)),
 )
-AXIS_STYLE = dict(gridcolor=GRID, linecolor=AXIS, tickfont=dict(color=INK_MUTED), zeroline=False)
+AXIS_STYLE = dict(gridcolor=GRID, linecolor=AXIS, tickfont=dict(color=INK_MUTED, size=11), zeroline=False,
+                  title_font=dict(color=INK_MUTED, size=11))
 
 st.markdown(
     f"""
-    <h1 style="font-size:2.6rem; font-weight:800; letter-spacing:-0.02em; margin-bottom:0;">foresee</h1>
-    <p style="margin-top:0.1rem; margin-bottom:0.3rem;">
-      <a href="https://www.foresee.energy" style="color:{ZONE_COLORS['NORD']}; text-decoration:none; font-weight:600;">
-        www.foresee.energy
-      </a>
-    </p>
-    <p style="color:{INK_SECONDARY}; font-size:1.05rem; margin-top:0; margin-bottom:0.4rem;">
-      Italian zone electricity prices
-    </p>
-    <p style="color:{INK_MUTED}; font-size:0.85rem; margin-bottom:1.4rem;">
-      <a href="{GITHUB_REPO_URL}" style="color:{ZONE_COLORS['NORD']}; text-decoration:none; font-weight:600;">
-        GianfraG/gme-prices
-      </a>
-      &nbsp;·&nbsp;codice e storico completo della campagna di raccolta
-    </p>
+    <style>
+      #MainMenu, footer {{visibility: hidden;}}
+      header[data-testid="stHeader"] {{background: transparent;}}
+      .block-container {{padding-top: 1.6rem; padding-bottom: 2rem; max-width: 1400px;}}
+      html, body, [class*="css"] {{font-family: {FONT};}}
+      .fs-top {{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.6rem;
+                padding-bottom:1rem; border-bottom:1px solid {BORDER}; margin-bottom:1.6rem;}}
+      a.fs-logo, a.fs-logo:hover, a.fs-logo:visited {{font-size:30px; font-weight:400; color:#ffffff !important;
+                letter-spacing:-0.01em; text-decoration:none !important;}}
+      a.fs-logo b {{font-weight:700; color:{BRAND} !important;}}
+      .fs-tag {{color:{INK_MUTED}; font-size:12px; letter-spacing:.14em; text-transform:uppercase;}}
+      .fs-eyebrow {{color:{BRAND}; font-size:11.5px; font-weight:700; letter-spacing:.16em;
+                    text-transform:uppercase; margin:0 0 .25rem 0;}}
+      .fs-h1 {{color:{TEXT}; font-size:1.9rem; font-weight:700; letter-spacing:-0.015em; margin:0 0 .3rem 0;}}
+      .fs-h2 {{color:{TEXT}; font-size:1.35rem; font-weight:700; letter-spacing:-0.01em; margin:0 0 .25rem 0;}}
+      .fs-h3 {{color:{TEXT}; font-size:1.02rem; font-weight:600; margin:1.2rem 0 .1rem 0;}}
+      .fs-sub {{color:{INK_SECONDARY}; font-size:.92rem; margin:0 0 .2rem 0; line-height:1.5;}}
+      .fs-note {{color:{INK_MUTED}; font-size:.8rem; margin:.1rem 0 .6rem 0; line-height:1.5;}}
+      .fs-section {{margin-top:2.4rem; padding-top:1.4rem; border-top:1px solid {BORDER};}}
+      .fs-kpis {{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.75rem; margin:1.1rem 0 1.2rem 0;}}
+      .fs-kpi {{background:{SURFACE}; border:1px solid {BORDER}; border-radius:10px; padding:.8rem 1rem;}}
+      .fs-kpi .l {{color:{INK_MUTED}; font-size:.72rem; letter-spacing:.1em; text-transform:uppercase;}}
+      .fs-kpi .v {{color:{TEXT}; font-size:1.55rem; font-weight:700; margin-top:.15rem; font-variant-numeric:tabular-nums;}}
+      .fs-kpi .v span {{color:{INK_MUTED}; font-size:.8rem; font-weight:400; margin-left:.25rem;}}
+      .fs-kpi .d {{color:{INK_MUTED}; font-size:.75rem; margin-top:.1rem;}}
+      .fs-chips {{display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0 .3rem 0;}}
+      .fs-chip {{border:1px solid {BORDER}; background:{SURFACE}; color:{INK_SECONDARY}; border-radius:999px;
+                 padding:.18rem .65rem; font-size:.76rem; font-variant-numeric:tabular-nums;}}
+      .fs-chip.ok {{border-color:rgba(45,212,191,.45); color:{BRAND};}}
+      .fs-chip.warn {{border-color:rgba(217,89,38,.6); color:#f08a5d;}}
+      .fs-foot {{margin-top:3rem; padding-top:1.2rem; border-top:1px solid {BORDER}; color:{INK_MUTED};
+                 font-size:.78rem; line-height:1.7;}}
+      .fs-foot a {{color:{INK_SECONDARY}; text-decoration:none;}}
+    </style>
     """,
     unsafe_allow_html=True,
 )
 
 
+def html(s):
+    st.markdown(s, unsafe_allow_html=True)
+
+
+def fmt_num(v, dec=1):
+    if v is None or pd.isna(v):
+        return "—"
+    return f"{v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+# ---------------------------------------------------------------------------
+# Dati
+# ---------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def load_data():
     df = pd.read_csv(DATA_FILE, dtype={"ora": str})
     # Il timestamp UTC è univoco (a differenza di "data"+"ora" locali, che si
-    # ripetono davvero una volta l'anno nel giorno del cambio dall'ora legale
-    # a quella solare): è la base corretta per ordinare/plottare senza
-    # sovrapporre per errore due istanti reali distinti.
+    # ripetono una volta l'anno al cambio dall'ora legale a quella solare).
     df["datetime"] = pd.to_datetime(df["utc"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None)
     df["data"] = pd.to_datetime(df["data"])
     return df
@@ -88,54 +154,151 @@ def load_last_update():
         return json.load(f)
 
 
+def _risorsa(nome):
+    return f"{RESULTS_BASE}/{nome}" if RESULTS_BASE.startswith("http") else os.path.join(RESULTS_BASE, nome)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_optimization():
+    sorgente = _risorsa("meta.json")
+    if sorgente.startswith("http"):
+        with urllib.request.urlopen(sorgente, timeout=15) as r:
+            meta = json.loads(r.read().decode("utf-8"))
+    else:
+        with open(sorgente, encoding="utf-8") as f:
+            meta = json.load(f)
+    piano = pd.read_csv(_risorsa("plan.csv"))
+    storico = pd.read_csv(_risorsa("history.csv"))
+    for d in (piano, storico):
+        if not d.empty:
+            d["datetime"] = pd.to_datetime(d["ts_utc"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None)
+    return meta, piano, storico
+
+
+def try_optimization():
+    try:
+        return load_optimization()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Intestazione
+# ---------------------------------------------------------------------------
+html(
+    f"""
+    <div class="fs-top">
+      <a class="fs-logo" href="{SITE_URL}" target="_blank">fore<b>see</b></a>
+      <div class="fs-tag">Market intelligence · Italia</div>
+    </div>
+    <p class="fs-eyebrow">Mercato elettrico · MGP</p>
+    <p class="fs-h1">Prezzi zonali del mercato del giorno prima</p>
+    <p class="fs-sub">Zone di offerta italiane, €/MWh. Risoluzione a 15 minuti dal 1° ottobre 2025, oraria in precedenza.</p>
+    """
+)
+
 try:
     df = load_data()
 except FileNotFoundError:
-    st.warning(
-        "Nessun dato ancora raccolto. Il file data/prezzi_zonali.csv verrà creato "
-        "dalla prima esecuzione dello script/workflow di raccolta dati."
-    )
+    st.warning("Dati non ancora disponibili: il file data/prezzi_zonali.csv viene creato dalla prima esecuzione della pipeline.")
     st.stop()
 
 df_mercato = df[df["mercato"] == MERCATO]
-
 ultimo_controllo = load_last_update()
-info_col1, info_col2 = st.columns(2)
-with info_col1:
-    st.caption(
-        f"Dati disponibili fino al: **{df_mercato['datetime'].max().strftime('%d/%m/%Y %H:%M')}** "
-        f"— campagna di raccolta dati dal {df_mercato['data'].min().strftime('%d/%m/%Y')}"
-    )
-with info_col2:
-    if ultimo_controllo:
-        ora_controllo = pd.Timestamp(ultimo_controllo["last_check"]).strftime("%d/%m/%Y %H:%M:%S")
-        st.caption(f"Ultimo controllo pipeline: **{ora_controllo}**")
-    else:
-        st.caption("Ultimo controllo pipeline: non ancora disponibile")
+opt = try_optimization()
 
-# Individua dinamicamente le colonne di prezzo/zona presenti nei dati
+adesso = pd.Timestamp.now(tz=TZ).tz_localize(None)  # avanza ad ogni refresh
+oggi = adesso.normalize()
+inizio_finestra = oggi - pd.Timedelta(days=GIORNI_STORICO_MOSTRATI - 1)
+fine_domani = oggi + pd.Timedelta(days=2) - pd.Timedelta(minutes=1)
+fine_dopodomani = oggi + pd.Timedelta(days=3) - pd.Timedelta(minutes=1)
+
 colonne_zona = [
     c for c in df_mercato.columns
     if c not in ("data", "ora", "utc", "mercato", "datetime") and df_mercato[c].dtype != object
 ]
+
+# --- Indicatori sintetici (zona SUD) ------------------------------------------
+kpi = []  # (etichetta, valore, unità, dettaglio)
+if ZONA_PREVISTA in df_mercato:
+    sud = df_mercato[["datetime", ZONA_PREVISTA]].dropna().sort_values("datetime")
+    corrente = sud[sud["datetime"] <= adesso].tail(1)
+    oggi_s = sud[(sud["datetime"] >= oggi) & (sud["datetime"] < oggi + pd.Timedelta(days=1))][ZONA_PREVISTA]
+    dom_s = sud[(sud["datetime"] >= oggi + pd.Timedelta(days=1)) & (sud["datetime"] < oggi + pd.Timedelta(days=2))][ZONA_PREVISTA]
+    if not corrente.empty:
+        kpi.append(("SUD · quarto d'ora corrente", fmt_num(corrente[ZONA_PREVISTA].iloc[0]), "€/MWh",
+                    corrente["datetime"].iloc[0].strftime("%d/%m %H:%M")))
+    if len(oggi_s):
+        kpi.append(("SUD · media oggi", fmt_num(oggi_s.mean()), "€/MWh",
+                    f"min {fmt_num(oggi_s.min(), 0)} · max {fmt_num(oggi_s.max(), 0)}"))
+    if len(dom_s):
+        kpi.append(("SUD · media domani", fmt_num(dom_s.mean()), "€/MWh", "MGP pubblicato"))
+if opt is not None:
+    meta_o, piano_o, _ = opt
+    if not piano_o.empty and "price_source" in piano_o:
+        prev_o = piano_o[(piano_o["price_source"] == "previsto") & (piano_o["datetime"] > df_mercato["datetime"].max())]
+        if len(prev_o):
+            giorno = prev_o["datetime"].dt.normalize()
+            g = prev_o[giorno == giorno.min()]
+            kpi.append((f"SUD · previsione {g['datetime'].iloc[0].strftime('%d/%m')}", fmt_num(g["price_eur_mwh"].mean()),
+                        "€/MWh", "media sulle ore previste"))
+    if meta_o.get("live_mae_7d_eur_mwh") is not None:
+        kpi.append(("Errore di previsione", fmt_num(meta_o["live_mae_7d_eur_mwh"]), "€/MWh",
+                    "MAE ultimi 7 giorni, zona SUD"))
+if kpi:
+    html('<div class="fs-kpis">' + "".join(
+        f'<div class="fs-kpi"><div class="l">{l}</div><div class="v">{v}<span>{u}</span></div><div class="d">{d}</div></div>'
+        for l, v, u, d in kpi) + "</div>")
+
+chips = [f"Dati MGP fino al {df_mercato['datetime'].max().strftime('%d/%m/%Y %H:%M')}",
+         f"Storico dal {df_mercato['data'].min().strftime('%d/%m/%Y')}"]
+if ultimo_controllo:
+    chips.append("Ultimo controllo pipeline " + pd.Timestamp(ultimo_controllo["last_check"]).strftime("%d/%m/%Y %H:%M"))
+html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for c in chips) + "</div>")
+
+# ---------------------------------------------------------------------------
+# 1. Andamento prezzi
+# ---------------------------------------------------------------------------
+html('<div class="fs-section"><p class="fs-eyebrow">Prezzi</p><p class="fs-h2">Andamento e previsione</p>'
+     '<p class="fs-note">Linea continua: prezzi realizzati. Puntinato: prezzi MGP già pubblicati per il giorno '
+     f'successivo. Oltre l\'ultimo giorno pubblicato: previsione per la zona {ZONA_PREVISTA} (tratteggio) con '
+     'intervallo di previsione all\'80% (area), stimato dagli errori storici del modello per anticipo e fascia oraria.</p></div>')
+
 zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
+df_finestra = df_mercato[(df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)]
 
-# Finestra mostrata: gli ultimi N giorni "storici" (oggi incluso) + domani
-# (tratteggiato, il giorno-prima pubblicato oggi) + dopodomani lasciato
-# vuoto apposta, come spazio riservato per un futuro modulo di previsione.
-# Tutto lo storico raccolto resta comunque intero nel CSV su GitHub: qui
-# (grafico e tabella qui sotto) si filtra solo la vista.
-adesso = pd.Timestamp.now(tz=TZ).tz_localize(None)  # avanza ad ogni refresh della dashboard
-oggi = adesso.normalize()
-inizio_finestra = oggi - pd.Timedelta(days=GIORNI_STORICO_MOSTRATI - 1)
-fine_domani = oggi + pd.Timedelta(days=2) - pd.Timedelta(minutes=1)  # fine di "domani"
-fine_dopodomani = oggi + pd.Timedelta(days=3) - pd.Timedelta(minutes=1)  # per lo spazio vuoto
 
-df_finestra = df_mercato[
-    (df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)
-]
+def add_forecast(fig, opt_data, ultimo_pubblicato):
+    """Previsione della zona SUD oltre l'orizzonte MGP pubblicato, con banda."""
+    if opt_data is None:
+        return False
+    _, piano, _ = opt_data
+    if piano.empty or "price_source" not in piano:
+        return False
+    prev = piano[(piano["price_source"] == "previsto") & (piano["datetime"] > ultimo_pubblicato)].copy()
+    if prev.empty:
+        return False
+    colore = ZONE_COLORS.get(ZONA_PREVISTA, BRAND)
+    banda = {"price_lo_eur_mwh", "price_hi_eur_mwh"} <= set(prev.columns) and prev["price_hi_eur_mwh"].notna().any()
+    if banda:
+        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_hi_eur_mwh"], mode="lines",
+                                 line=dict(width=0, shape="hv"), showlegend=False, hoverinfo="skip", legendgroup="prev"))
+        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_lo_eur_mwh"], mode="lines",
+                                 line=dict(width=0, shape="hv"), fill="tonexty", fillcolor="rgba(201,133,0,0.18)",
+                                 name=f"{ZONA_PREVISTA} · intervallo 80%", legendgroup="prev", hoverinfo="skip"))
+        hover = ("%{y:.1f} €/MWh  (80%: %{customdata[0]:.0f}–%{customdata[1]:.0f})"
+                 f"<extra>{ZONA_PREVISTA} previsione</extra>")
+        custom = prev[["price_lo_eur_mwh", "price_hi_eur_mwh"]].to_numpy()
+    else:
+        hover, custom = f"%{{y:.1f}} €/MWh<extra>{ZONA_PREVISTA} previsione</extra>", None
+    fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines",
+                             name=f"{ZONA_PREVISTA} · previsione", legendgroup="prev", customdata=custom,
+                             line=dict(color=colore, width=2, dash="dash", shape="hv"), hovertemplate=hover))
+    fig.add_vrect(x0=ultimo_pubblicato, x1=prev["datetime"].max(), fillcolor="rgba(255,255,255,0.03)", line_width=0,
+                  annotation_text="PREVISIONE", annotation_position="top left",
+                  annotation_font=dict(color=INK_MUTED, size=10))
+    return True
 
-st.markdown("#### Andamento prezzi")
 
 if zone_sel:
     if df_mercato.empty:
@@ -144,45 +307,29 @@ if zone_sel:
         fig = go.Figure()
         for zona in zone_sel:
             colore = ZONE_COLORS.get(zona, INK_SECONDARY)
-            # Tutto lo storico (non solo la finestra di default): la vista
-            # iniziale del grafico resta gli ultimi giorni come prima, ma
-            # con il range slider sotto si puo' scorrere indietro a
-            # piacere su tutta la campagna di raccolta.
             serie = df_mercato[["datetime", zona]].dropna().sort_values("datetime")
-            # Il confine tra continuo e tratteggiato e' l'istante esatto di
-            # "adesso" (cio' che e' gia' accaduto vs cio' che deve ancora
-            # accadere), non il confine di calendario tra oggi e domani.
             avvenuto = serie[serie["datetime"] <= adesso]
             futuro = serie[serie["datetime"] > adesso]
             if not avvenuto.empty and not futuro.empty:
-                # Ripete l'ultimo punto avvenuto come primo punto della tratta
-                # futura, cosi' le due linee restano visivamente connesse.
+                # l'ultimo punto avvenuto apre la tratta futura: linee connesse
                 futuro = pd.concat([avvenuto.iloc[[-1]], futuro], ignore_index=True)
             hover = "%{y:.1f} €/MWh<extra>" + zona + "</extra>"
-            # Scattergl (WebGL) invece di Scatter: con tutto lo storico
-            # caricato (decine di migliaia di punti per zona) resta fluido
-            # da spostare/zoomare nel range slider.
+            # Scattergl: fluido anche con tutto lo storico nel range slider
             if not avvenuto.empty:
-                fig.add_trace(go.Scattergl(
-                    x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
-                    legendgroup=zona, line=dict(color=colore, width=2), hovertemplate=hover,
-                ))
+                fig.add_trace(go.Scattergl(x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
+                                           legendgroup=zona, line=dict(color=colore, width=1.8), hovertemplate=hover))
             if not futuro.empty:
-                fig.add_trace(go.Scattergl(
-                    x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
-                    legendgroup=zona, showlegend=avvenuto.empty,
-                    line=dict(color=colore, width=2, dash="dot"), hovertemplate=hover,
-                ))
-
-        fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED)
-        fig.add_annotation(
-            x=oggi + pd.Timedelta(days=2.5), y=0.5, yref="paper",
-            text="previsioni<br>in arrivo", showarrow=False,
-            font=dict(color=INK_MUTED, size=12),
-        )
+                fig.add_trace(go.Scattergl(x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
+                                           legendgroup=zona, showlegend=avvenuto.empty,
+                                           line=dict(color=colore, width=1.8, dash="dot"), hovertemplate=hover))
+        if ZONA_PREVISTA in zone_sel:
+            add_forecast(fig, opt, df_mercato["datetime"].max())
+        fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED, line_width=1)
+        fig.add_annotation(x=adesso, y=1.0, yref="paper", text=f"Adesso {adesso.strftime('%H:%M')}", showarrow=False,
+                           yanchor="bottom", font=dict(color=INK_MUTED, size=10))
         fig.update_xaxes(
-            range=[inizio_finestra, fine_dopodomani],  # vista di default: invariata
-            rangeslider=dict(visible=True, thickness=0.08, bgcolor="rgba(255,255,255,0.03)", bordercolor=AXIS),
+            range=[inizio_finestra, fine_dopodomani],
+            rangeslider=dict(visible=True, thickness=0.07, bgcolor="rgba(255,255,255,0.02)", bordercolor=AXIS),
             rangeselector=dict(
                 buttons=[
                     dict(count=7, label="7g", step="day", stepmode="backward"),
@@ -191,21 +338,30 @@ if zone_sel:
                     dict(count=1, label="1a", step="year", stepmode="backward"),
                     dict(step="all", label="Tutto"),
                 ],
-                bgcolor="rgba(255,255,255,0.06)", activecolor=ZONE_COLORS["NORD"],
-                font=dict(color=INK_SECONDARY, size=11),
+                bgcolor="rgba(255,255,255,0.05)", activecolor="rgba(45,212,191,0.35)",
+                font=dict(color=INK_SECONDARY, size=11), x=0, xanchor="left", y=1.02, yanchor="bottom",
             ),
             **AXIS_STYLE,
         )
         fig.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
-        fig.update_layout(**CHART_LAYOUT, height=540)
+        fig.update_layout(**CHART_LAYOUT, height=580)
+        # legenda a destra, selettore del periodo a sinistra: nessuna sovrapposizione
+        fig.update_layout(margin=dict(t=90, l=10, r=10, b=10),
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                      bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
         st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Seleziona almeno una zona per vedere il grafico.")
+    st.info("Selezionare almeno una zona.")
 
-with st.expander("Dati grezzi"):
+with st.expander("Dati tabellari (finestra visualizzata)"):
     st.dataframe(df_finestra.drop(columns="datetime"), use_container_width=True)
 
-st.markdown("#### Distribuzione mensile dei prezzi")
+# ---------------------------------------------------------------------------
+# 2. Distribuzione mensile
+# ---------------------------------------------------------------------------
+html('<div class="fs-section"><p class="fs-eyebrow">Statistiche</p><p class="fs-h2">Distribuzione mensile dei prezzi</p>'
+     '<p class="fs-note">Ultimi 24 mesi. Box: primo quartile, mediana, terzo quartile; baffi entro 1,5 × IQR. '
+     f'Zona {ZONA_PREVISTA} visibile di default, le altre selezionabili dalla legenda.</p></div>')
 
 due_anni_fa = oggi - pd.DateOffset(years=2)
 df_2anni = df_mercato[(df_mercato["datetime"] >= due_anni_fa) & (df_mercato["datetime"] <= adesso)]
@@ -216,11 +372,8 @@ if zone_sel:
     else:
         box_long = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
         box_long["mese"] = box_long["datetime"].dt.strftime("%Y-%m")
-
-        # Statistiche pre-calcolate lato server (quartili/baffi per zona/mese,
-        # convenzione Tukey 1.5*IQR): al grafico arrivano ~168 righe aggregate
-        # invece di ~300.000 punti grezzi, molto piu' leggero da renderizzare
-        # nel browser (tutto vettorizzato con pandas, niente loop Python).
+        # Statistiche pre-calcolate lato server (Tukey 1.5*IQR): al browser
+        # arrivano poche righe aggregate invece di centinaia di migliaia di punti.
         grouped = box_long.groupby(["zona", "mese"])["prezzo"]
         stats = grouped.quantile(0.25).rename("q1").reset_index()
         stats["mediana"] = grouped.median().values
@@ -228,7 +381,6 @@ if zone_sel:
         iqr = stats["q3"] - stats["q1"]
         stats["_lo_fence"] = stats["q1"] - 1.5 * iqr
         stats["_hi_fence"] = stats["q3"] + 1.5 * iqr
-
         entro_baffi = box_long.merge(stats[["zona", "mese", "_lo_fence", "_hi_fence"]], on=["zona", "mese"])
         entro_baffi = entro_baffi[
             (entro_baffi["prezzo"] >= entro_baffi["_lo_fence"]) & (entro_baffi["prezzo"] <= entro_baffi["_hi_fence"])
@@ -244,86 +396,39 @@ if zone_sel:
             fig_box.add_trace(go.Box(
                 x=sub["mese"], q1=sub["q1"], median=sub["mediana"], q3=sub["q3"],
                 lowerfence=sub["baffo_min"], upperfence=sub["baffo_max"],
-                name=zona, marker_color=ZONE_COLORS.get(zona, INK_SECONDARY),
-                # Solo SUD visibile di default: le altre restano in legenda,
-                # cliccabili per essere mostrate a piacere.
-                visible=True if zona == "SUD" else "legendonly",
+                name=zona, marker_color=ZONE_COLORS.get(zona, INK_SECONDARY), line=dict(width=1.2),
+                visible=True if zona == ZONA_PREVISTA else "legendonly",
             ))
         fig_box.update_layout(boxmode="group")
         fig_box.update_xaxes(tickangle=45, **AXIS_STYLE)
         fig_box.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
-        fig_box.update_layout(**CHART_LAYOUT, height=460)
+        fig_box.update_layout(**CHART_LAYOUT, height=440)
         st.plotly_chart(fig_box, use_container_width=True)
 else:
-    st.info("Seleziona almeno una zona per vedere la distribuzione mensile.")
+    st.info("Selezionare almeno una zona.")
 
 
 # ---------------------------------------------------------------------------
-# Ottimizzazione storage (receding horizon a 48 h, ricalcolata ogni 15 minuti)
+# 3. Ottimizzazione degli accumuli (receding horizon a 48 h)
 # ---------------------------------------------------------------------------
-# I risultati NON sono in questo branch: un processo esterno li pubblica sul
-# branch dedicato "optimization-results" (un solo commit sovrascritto), cosi'
-# i push frequenti non riavviano la dashboard e non gonfiano la storia di main.
-# Qui si leggono via raw.githubusercontent.com con cache breve. Tutta la
-# sezione e' isolata: se i file mancano o qualcosa fallisce, compare solo un
-# messaggio informativo e il resto della pagina non cambia.
-RESULTS_BASE = os.environ.get(
-    "FORESEE_RESULTS_BASE",
-    "https://raw.githubusercontent.com/GianfraG/gme-prices/optimization-results",
-)
-RISULTATI_VECCHI_MIN = 45
-ORE_PASSATO = 24
-ORE_FUTURO = 48
-COL_PREZZO = ZONE_COLORS["SUD"]
-COL_DOMANDA = INK_SECONDARY
-COL_PDC = ZONE_COLORS["NORD"]
-COL_STORAGE = ZONE_COLORS["CNOR"]
-COL_SOC = ZONE_COLORS["CSUD"]
-COL_RES = ZONE_COLORS["SARD"]
-COL_CARICA = ZONE_COLORS["CSUD"]
-COL_SCARICA = ZONE_COLORS["CNOR"]
-COL_TEMP_TES = ZONE_COLORS["SICI"]
-COL_TEMP_ARIA = ZONE_COLORS["CNOR"]
+# I risultati arrivano dal branch "optimization-results" (un commit
+# sovrascritto ad ogni calcolo): i push frequenti non riavviano l'app e non
+# appesantiscono la storia di main. Sezione isolata: se i file mancano o
+# qualcosa fallisce compare solo un avviso, il resto della pagina non cambia.
 
-
-def _leggi(nome):
-    if RESULTS_BASE.startswith("http"):
-        return f"{RESULTS_BASE}/{nome}"
-    return os.path.join(RESULTS_BASE, nome)
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def load_optimization():
-    import urllib.request
-
-    sorgente = _leggi("meta.json")
-    if sorgente.startswith("http"):
-        with urllib.request.urlopen(sorgente, timeout=15) as r:
-            meta = json.loads(r.read().decode("utf-8"))
-    else:
-        with open(sorgente, encoding="utf-8") as f:
-            meta = json.load(f)
-    piano = pd.read_csv(_leggi("plan.csv"))
-    storico = pd.read_csv(_leggi("history.csv"))
-    for d in (piano, storico):
-        if not d.empty:
-            d["datetime"] = pd.to_datetime(d["ts_utc"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None)
-    return meta, piano, storico
-
-
-def _passato_futuro(storico, piano, colonna, adesso):
-    """Serie continua fino ad 'adesso' (storico eseguito) e tratteggiata dopo
-    (piano corrente), con l'ultimo punto passato ripetuto come primo del
-    futuro per connettere le due tratte."""
-    inizio_piano = piano["datetime"].min() if not piano.empty else adesso
+def _passato_futuro(storico, piano, colonna):
+    """Storico eseguito (continuo) fino all'inizio del piano, piano corrente
+    (tratteggiato) dopo; l'ultimo punto passato apre la tratta futura."""
+    inizio_piano = piano["datetime"].min()
     passato = storico[storico["datetime"] < inizio_piano][["datetime", colonna]] if not storico.empty else pd.DataFrame()
-    futuro = piano[["datetime", colonna]] if not piano.empty else pd.DataFrame()
+    futuro = piano[["datetime", colonna]]
     if not passato.empty and not futuro.empty:
         futuro = pd.concat([passato.iloc[[-1]], futuro], ignore_index=True)
     return passato, futuro
 
 
-def _linea(fig, row, passato, futuro, colonna, nome, colore, unita, fill=None, width=2, opacity=1.0):
+def _linea(fig, row, storico, piano, colonna, nome, colore, unita, fill=None, width=1.8, opacity=1.0):
+    passato, futuro = _passato_futuro(storico, piano, colonna)
     hover = "%{y:.1f} " + unita + "<extra>" + nome + "</extra>"
     if not passato.empty:
         fig.add_trace(go.Scatter(x=passato["datetime"], y=passato[colonna], mode="lines", name=nome,
@@ -336,9 +441,11 @@ def _linea(fig, row, passato, futuro, colonna, nome, colore, unita, fill=None, w
                                  fill=fill, opacity=0.8 * opacity), row=row, col=1)
 
 
-def _barre(fig, row, passato, futuro, colonna, nome, colore, unita, segno=1):
+def _barre(fig, row, storico, piano, colonna, nome, colore, unita, segno=1):
+    passato, futuro = _passato_futuro(storico, piano, colonna)
     hover = "%{y:.0f} " + unita + "<extra>" + nome + "</extra>"
-    for parte, opacita, mostra in ((passato, 0.85, True), (futuro.iloc[1:] if not passato.empty else futuro, 0.35, passato.empty)):
+    futuro = futuro.iloc[1:] if not passato.empty else futuro
+    for parte, opacita, mostra in ((passato, 0.85, True), (futuro, 0.35, passato.empty)):
         if parte.empty:
             continue
         fig.add_trace(go.Bar(x=parte["datetime"], y=segno * parte[colonna], name=nome, legendgroup=nome,
@@ -346,86 +453,90 @@ def _barre(fig, row, passato, futuro, colonna, nome, colore, unita, segno=1):
                              marker_line_width=0), row=row, col=1)
 
 
-def _prezzo(fig, row, storico, piano, adesso):
-    passato, futuro = _passato_futuro(storico, piano, "price_eur_mwh", adesso)
+def _prezzo(fig, row, storico, piano):
+    passato, futuro = _passato_futuro(storico, piano, "price_eur_mwh")
     if not passato.empty:
         fig.add_trace(go.Scatter(x=passato["datetime"], y=passato["price_eur_mwh"], mode="lines", name="Prezzo SUD",
-                                 legendgroup="prezzo", line=dict(color=COL_PREZZO, width=2, shape="hv"),
+                                 legendgroup="prezzo", line=dict(color=COL_PREZZO, width=1.8, shape="hv"),
                                  hovertemplate="%{y:.1f} €/MWh<extra>SUD</extra>"), row=row, col=1)
-    if not futuro.empty:
-        # parte pubblicata (MGP noto) e parte prevista (ML) distinte; il punto
-        # di confine e' ripetuto per non lasciare buchi tra le due tratte
-        pub = futuro.copy()
-        prev = futuro.copy()
-        src = pd.concat([pd.Series(["pubblicato"] if not passato.empty else []), piano["price_source"]], ignore_index=True)
-        pub.loc[src.values != "pubblicato", "price_eur_mwh"] = None
-        is_prev = src.values == "previsto"
-        primo_prev = is_prev.argmax() if is_prev.any() else None
-        if primo_prev:
-            is_prev[primo_prev - 1] = True
-        prev.loc[~is_prev, "price_eur_mwh"] = None
-        fig.add_trace(go.Scatter(x=pub["datetime"], y=pub["price_eur_mwh"], mode="lines", name="Prezzo SUD",
-                                 legendgroup="prezzo", showlegend=passato.empty,
-                                 line=dict(color=COL_PREZZO, width=2, dash="dot", shape="hv"),
-                                 hovertemplate="%{y:.1f} €/MWh<extra>SUD pubblicato</extra>"), row=row, col=1)
-        if is_prev.any():
-            fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines",
-                                     name="Prezzo previsto (ML)", line=dict(color=INK_MUTED, width=2, dash="dash", shape="hv"),
-                                     hovertemplate="%{y:.1f} €/MWh<extra>SUD previsto</extra>"), row=row, col=1)
+    if futuro.empty:
+        return
+    src = pd.concat([pd.Series(["pubblicato"] if not passato.empty else []), piano["price_source"]], ignore_index=True)
+    pub, prev = futuro.copy(), futuro.copy()
+    pub.loc[src.values != "pubblicato", "price_eur_mwh"] = None
+    is_prev = src.values == "previsto"
+    primo = is_prev.argmax() if is_prev.any() else None
+    if primo:
+        is_prev[primo - 1] = True  # punto di raccordo tra le due tratte
+    prev.loc[~is_prev, "price_eur_mwh"] = None
+    fig.add_trace(go.Scatter(x=pub["datetime"], y=pub["price_eur_mwh"], mode="lines", name="Prezzo SUD",
+                             legendgroup="prezzo", showlegend=passato.empty,
+                             line=dict(color=COL_PREZZO, width=1.8, dash="dot", shape="hv"),
+                             hovertemplate="%{y:.1f} €/MWh<extra>SUD MGP</extra>"), row=row, col=1)
+    if is_prev.any():
+        if "price_hi_eur_mwh" in piano and piano["price_hi_eur_mwh"].notna().any():
+            band = piano[piano["price_source"] == "previsto"]
+            fig.add_trace(go.Scatter(x=band["datetime"], y=band["price_hi_eur_mwh"], mode="lines",
+                                     line=dict(width=0, shape="hv"), showlegend=False, hoverinfo="skip",
+                                     legendgroup="prev"), row=row, col=1)
+            fig.add_trace(go.Scatter(x=band["datetime"], y=band["price_lo_eur_mwh"], mode="lines",
+                                     line=dict(width=0, shape="hv"), fill="tonexty", fillcolor="rgba(201,133,0,0.16)",
+                                     name="Intervallo 80%", legendgroup="prev", hoverinfo="skip",
+                                     showlegend=row == 1), row=row, col=1)
+        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines", name="Prezzo SUD previsto",
+                                 legendgroup="prev", showlegend=row == 1,
+                                 line=dict(color=COL_PREZZO, width=1.8, dash="dash", shape="hv"),
+                                 opacity=0.85, hovertemplate="%{y:.1f} €/MWh<extra>SUD previsto</extra>"),
+                      row=row, col=1)
 
 
-def _finalizza(fig, adesso, n_righe, titoli_y, altezza):
+def _finalizza(fig, titoli_y, altezza):
     for i, t in enumerate(titoli_y, start=1):
         fig.update_yaxes(title_text=t, row=i, col=1, **AXIS_STYLE)
     fig.update_xaxes(range=[adesso - pd.Timedelta(hours=ORE_PASSATO), adesso + pd.Timedelta(hours=ORE_FUTURO)],
                      **AXIS_STYLE)
-    fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED)
+    fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED, line_width=1)
     fig.add_annotation(x=adesso, y=1.0, yref="paper", text=f"Adesso {adesso.strftime('%H:%M')}", showarrow=False,
-                       yanchor="bottom", font=dict(color=INK_MUTED, size=11))
+                       yanchor="bottom", font=dict(color=INK_MUTED, size=10))
     fig.update_layout(**CHART_LAYOUT, height=altezza, barmode="relative", bargap=0)
-    fig.update_layout(margin=dict(t=60, l=10, r=10, b=10),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                                  bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
+    fig.update_layout(margin=dict(t=64, l=10, r=10, b=10))
 
 
 def sezione_ottimizzazione():
-    from plotly.subplots import make_subplots
-
-    st.markdown("#### Ottimizzazione storage — prossime 48 ore")
-    st.caption(
-        "Ogni 15 minuti un modello di ottimizzazione ricalcola come usare uno storage termico e una "
-        "batteria di un sito industriale nelle 48 ore successive. Linea continua: cio' che e' stato "
-        "eseguito; tratteggio: il piano corrente. Dove il prezzo MGP non e' ancora pubblicato viene "
-        "usata una previsione. La domanda del sito e' simulata."
-    )
-    try:
-        meta, piano, storico = load_optimization()
-    except Exception:
-        st.info("Risultati dell'ottimizzazione non disponibili al momento: la sezione verrà mostrata appena pubblicati.")
+    html('<div class="fs-section"><p class="fs-eyebrow">Ottimizzazione operativa</p>'
+         '<p class="fs-h2">Gestione predittiva degli accumuli</p>'
+         '<p class="fs-note">Model Predictive Control con orizzonte di 48 h e passo di 15 minuti, ricalcolato ogni '
+         '15 minuti (MILP, Gurobi). Accumulo termico con pompa di calore e batteria elettrica di un sito industriale; '
+         'prezzo di riferimento zona SUD (MGP pubblicato o previsto). Linea continua: esercizio realizzato; '
+         'tratteggio: piano corrente. Profili di domanda del sito simulati.</p></div>')
+    if opt is None:
+        st.info("Risultati di ottimizzazione non disponibili al momento.")
         return
+    meta, piano, storico = opt
     if piano.empty:
-        st.info("Nessun piano di ottimizzazione pubblicato al momento.")
+        st.info("Nessun piano di ottimizzazione disponibile al momento.")
         return
 
-    adesso = pd.Timestamp.now(tz=TZ).tz_localize(None)
     generato = pd.Timestamp(meta.get("generated_at")).tz_convert(TZ).tz_localize(None)
     eta_min = (adesso - generato).total_seconds() / 60
-    c1, c2 = st.columns(2)
-    with c1:
-        st.caption(f"Ultimo aggiornamento: **{generato.strftime('%d/%m/%Y %H:%M')}** "
-                   f"— solver: {meta.get('solver_status', 'n/d')}"
-                   + (f", gap {100 * meta['mip_gap']:.2f}%" if meta.get("mip_gap") is not None else ""))
-    with c2:
-        st.caption(f"Previsione prezzi: {meta.get('price_model_version') or meta.get('price_model') or 'n/d'}"
-                   f" — passi previsti: {meta.get('price_steps_forecast', 'n/d')}"
-                   + (" — domanda simulata" if meta.get("demand_is_simulated") else ""))
+    stato = meta.get("solver_status", "n/d")
+    chips = [(f"Aggiornato {generato.strftime('%d/%m %H:%M')}", "ok" if eta_min <= RISULTATI_VECCHI_MIN else "warn"),
+             ("Solver: " + ("ottimo" if stato == "optimal" else stato)
+              + (f" · gap {fmt_num(100 * meta['mip_gap'], 2)}%" if meta.get("mip_gap") is not None else ""),
+              "ok" if stato == "optimal" else "warn")]
+    if meta.get("solve_seconds") is not None:
+        chips.append((f"Tempo di calcolo {fmt_num(meta['solve_seconds'], 1)} s", ""))
+    chips.append((f"Modello prezzi {meta.get('price_model_version') or meta.get('price_model') or 'n/d'}", ""))
+    if meta.get("price_steps_forecast") is not None:
+        chips.append((f"Passi a prezzo previsto {meta['price_steps_forecast']}/{meta.get('horizon_steps', 192)}", ""))
+    if meta.get("demand_is_simulated"):
+        chips.append(("Domanda simulata", ""))
+    html('<div class="fs-chips">' + "".join(f'<span class="fs-chip {c}">{t}</span>' for t, c in chips) + "</div>")
     if eta_min > RISULTATI_VECCHI_MIN:
-        st.warning(f"I risultati dell'ottimizzazione hanno {eta_min:.0f} minuti: il processo di calcolo potrebbe essere fermo.")
+        st.warning(f"Ultimo calcolo di {eta_min:.0f} minuti fa: il processo di ottimizzazione potrebbe essere fermo.")
 
-    inizio = adesso - pd.Timedelta(hours=ORE_PASSATO + 1)
-    if not storico.empty:
-        storico = storico[storico["datetime"] >= inizio]
-    storico = storico.copy()
+    storico = (storico[storico["datetime"] >= adesso - pd.Timedelta(hours=ORE_PASSATO + 1)].copy()
+               if not storico.empty else storico.copy())
     piano = piano.copy()
     for c in piano.columns:
         if c not in storico.columns:
@@ -435,81 +546,64 @@ def sezione_ottimizzazione():
             d["tes_scarica_kw"] = (-d["tes_net_kw"]).clip(lower=0)
             d["tes_carica_kw"] = d["tes_net_kw"].clip(lower=0)
 
-    # --- 1. Storage termico ---------------------------------------------------
-    st.markdown("##### Storage termico")
+    # --- Accumulo termico -------------------------------------------------------
+    html('<p class="fs-h3">Accumulo termico (TES) e pompa di calore</p>'
+         '<p class="fs-note">Prezzo · bilancio termico (domanda di processo, calore da accumulo e da pompa di calore) · '
+         'stato di carica · temperatura dell\'accumulo · potenza di carica/scarica.</p>')
     con_temp = "tes_temp_c" in piano.columns
     n = 5 if con_temp else 4
     fig = make_subplots(rows=n, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                         row_heights=[0.21, 0.23, 0.17, 0.17, 0.22] if con_temp else [0.25, 0.27, 0.22, 0.26])
-    _prezzo(fig, 1, storico, piano, adesso)
-    # ordine di disegno: barre, poi pompa di calore (sottile: senza vincoli di
-    # tempo minimo di accensione il modello la modula a intermittenza), poi la
-    # domanda sopra a tutto
-    p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
-    _barre(fig, 2, p, f, "tes_scarica_kw", "Calore dallo storage", COL_STORAGE, "kW")
-    p, f = _passato_futuro(storico, piano, "hp_heat_kw", adesso)
-    _linea(fig, 2, p, f, "hp_heat_kw", "Calore dalla pompa di calore", COL_PDC, "kW", width=1, opacity=0.55)
-    p, f = _passato_futuro(storico, piano, "heat_demand_kw", adesso)
-    _linea(fig, 2, p, f, "heat_demand_kw", "Domanda termica", COL_DOMANDA, "kW")
-    p, f = _passato_futuro(storico, piano, "tes_soc_pct", adesso)
-    _linea(fig, 3, p, f, "tes_soc_pct", "Stato di carica", COL_SOC, "%")
+    _prezzo(fig, 1, storico, piano)
+    # barre, poi pompa di calore (modulazione on/off frequente: linea sottile), poi domanda in primo piano
+    _barre(fig, 2, storico, piano, "tes_scarica_kw", "Calore da accumulo", COL_STORAGE, "kW")
+    _linea(fig, 2, storico, piano, "hp_heat_kw", "Calore da pompa di calore", COL_PDC, "kW", width=1, opacity=0.55)
+    _linea(fig, 2, storico, piano, "heat_demand_kw", "Domanda termica", COL_DOMANDA, "kW")
+    _linea(fig, 3, storico, piano, "tes_soc_pct", "Stato di carica TES", COL_SOC, "%")
     if con_temp:
-        p, f = _passato_futuro(storico, piano, "tes_temp_c", adesso)
-        _linea(fig, 4, p, f, "tes_temp_c", "Temperatura storage", COL_TEMP_TES, "°C")
-        # 85 °C: temperatura minima richiesta dal processo; 95 °C: mandata massima della pompa di calore
-        for y, testo in ((85, "processo 85 °C"), (95, "max 95 °C")):
+        _linea(fig, 4, storico, piano, "tes_temp_c", "Temperatura TES", COL_TEMP_TES, "°C")
+        for y, testo in ((85, "T processo 85 °C"), (95, "T max 95 °C")):
             fig.add_hline(y=y, line_dash="dot", line_color=INK_MUTED, line_width=1, row=4, col=1,
                           annotation_text=testo, annotation_position="top left",
                           annotation_font=dict(color=INK_MUTED, size=10))
-    r = n
-    p, f = _passato_futuro(storico, piano, "tes_carica_kw", adesso)
-    _barre(fig, r, p, f, "tes_carica_kw", "Carica", COL_CARICA, "kW")
-    p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
-    _barre(fig, r, p, f, "tes_scarica_kw", "Scarica", COL_SCARICA, "kW", segno=-1)
-    titoli = ["€/MWh", "kW termici", "Carica %"] + (["°C"] if con_temp else []) + ["kW termici"]
-    _finalizza(fig, adesso, n, titoli, 960 if con_temp else 820)
+    _barre(fig, n, storico, piano, "tes_carica_kw", "Carica TES", COL_CARICA, "kW")
+    _barre(fig, n, storico, piano, "tes_scarica_kw", "Scarica TES", COL_SCARICA, "kW", segno=-1)
+    titoli = ["€/MWh", "kW termici", "SoC %"] + (["°C"] if con_temp else []) + ["kW termici"]
+    _finalizza(fig, titoli, 960 if con_temp else 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 2. Batteria ---------------------------------------------------------
-    st.markdown("##### Batteria")
+    # --- Batteria -----------------------------------------------------------------
+    html('<p class="fs-h3">Batteria (BESS)</p>'
+         '<p class="fs-note">Produzione fotovoltaica e domanda elettrica · prezzo · stato di carica · '
+         'potenza di carica/scarica.</p>')
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
                         row_heights=[0.27, 0.25, 0.22, 0.26])
-    p, f = _passato_futuro(storico, piano, "res_kw", adesso)
-    _linea(fig, 1, p, f, "res_kw", "Produzione rinnovabile", COL_RES, "kW", fill="tozeroy")
-    p, f = _passato_futuro(storico, piano, "el_demand_kw", adesso)
-    _linea(fig, 1, p, f, "el_demand_kw", "Domanda elettrica", COL_DOMANDA, "kW")
-    _prezzo(fig, 2, storico, piano, adesso)
-    p, f = _passato_futuro(storico, piano, "bess_soc_pct", adesso)
-    _linea(fig, 3, p, f, "bess_soc_pct", "Stato di carica batteria", COL_SOC, "%")
-    p, f = _passato_futuro(storico, piano, "bess_charge_kw", adesso)
-    _barre(fig, 4, p, f, "bess_charge_kw", "Carica batteria", COL_CARICA, "kW")
-    p, f = _passato_futuro(storico, piano, "bess_discharge_kw", adesso)
-    _barre(fig, 4, p, f, "bess_discharge_kw", "Scarica batteria", COL_SCARICA, "kW", segno=-1)
-    _finalizza(fig, adesso, 4, ["kW elettrici", "€/MWh", "Carica %", "kW elettrici"], 820)
+    _linea(fig, 1, storico, piano, "res_kw", "Produzione FV", COL_RES, "kW", fill="tozeroy")
+    _linea(fig, 1, storico, piano, "el_demand_kw", "Domanda elettrica", COL_DOMANDA, "kW")
+    _prezzo(fig, 2, storico, piano)
+    _linea(fig, 3, storico, piano, "bess_soc_pct", "Stato di carica BESS", COL_SOC, "%")
+    _barre(fig, 4, storico, piano, "bess_charge_kw", "Carica BESS", COL_CARICA, "kW")
+    _barre(fig, 4, storico, piano, "bess_discharge_kw", "Scarica BESS", COL_SCARICA, "kW", segno=-1)
+    _finalizza(fig, ["kW elettrici", "€/MWh", "SoC %", "kW elettrici"], 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 3. Meteo al sito ------------------------------------------------------
+    # --- Meteo ----------------------------------------------------------------------
     if "air_temp_c" in piano.columns:
-        st.markdown("##### Meteo al sito")
-        st.caption("Modello meteorologico Open-Meteo per il punto del sito. Anche il tratto passato è una "
-                   "stima del modello (ultima previsione/analisi disponibile), non una misura di stazione.")
+        html('<p class="fs-h3">Condizioni meteo al sito</p>'
+             '<p class="fs-note">Modello numerico Open-Meteo (anche per il passato: stime di modello, non misure di stazione). '
+             'Temperatura dell\'aria · irraggiamento globale orizzontale (GHI) e sul piano dei moduli (GTI) · '
+             'vento a 10 e 80 m · nuvolosità.</p>')
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
                             row_heights=[0.25, 0.27, 0.25, 0.23])
-        p, f = _passato_futuro(storico, piano, "air_temp_c", adesso)
-        _linea(fig, 1, p, f, "air_temp_c", "Temperatura aria", COL_TEMP_ARIA, "°C")
-        p, f = _passato_futuro(storico, piano, "ghi_wm2", adesso)
-        _linea(fig, 2, p, f, "ghi_wm2", "Irraggiamento orizzontale", COL_PREZZO, "W/m²", fill="tozeroy")
-        p, f = _passato_futuro(storico, piano, "gti_wm2", adesso)
-        _linea(fig, 2, p, f, "gti_wm2", "Irraggiamento sul piano FV", ZONE_COLORS["SICI"], "W/m²")
-        p, f = _passato_futuro(storico, piano, "wind10_kmh", adesso)
-        _linea(fig, 3, p, f, "wind10_kmh", "Vento a 10 m", COL_PDC, "km/h")
-        p, f = _passato_futuro(storico, piano, "wind80_kmh", adesso)
-        _linea(fig, 3, p, f, "wind80_kmh", "Vento a 80 m", ZONE_COLORS["CALA"], "km/h")
-        p, f = _passato_futuro(storico, piano, "cloud_pct", adesso)
-        _linea(fig, 4, p, f, "cloud_pct", "Nuvolosità", COL_DOMANDA, "%", fill="tozeroy")
-        _finalizza(fig, adesso, 4, ["°C", "W/m²", "km/h", "Nuvolosità %"], 760)
+        _linea(fig, 1, storico, piano, "air_temp_c", "Temperatura aria", COL_TEMP_ARIA, "°C")
+        _linea(fig, 2, storico, piano, "ghi_wm2", "GHI", COL_PREZZO, "W/m²", fill="tozeroy")
+        _linea(fig, 2, storico, piano, "gti_wm2", "GTI", ZONE_COLORS["SICI"], "W/m²")
+        _linea(fig, 3, storico, piano, "wind10_kmh", "Vento 10 m", COL_PDC, "km/h")
+        _linea(fig, 3, storico, piano, "wind80_kmh", "Vento 80 m", ZONE_COLORS["CALA"], "km/h")
+        _linea(fig, 4, storico, piano, "cloud_pct", "Nuvolosità", COL_DOMANDA, "%", fill="tozeroy")
+        _finalizza(fig, ["°C", "W/m²", "km/h", "%"], 760)
         fig.update_yaxes(range=[0, 105], row=4, col=1)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -517,4 +611,20 @@ def sezione_ottimizzazione():
 try:
     sezione_ottimizzazione()
 except Exception:
-    st.info("Sezione ottimizzazione temporaneamente non disponibile.")
+    st.info("Sezione di ottimizzazione temporaneamente non disponibile.")
+
+# ---------------------------------------------------------------------------
+# Piè di pagina
+# ---------------------------------------------------------------------------
+html(
+    f"""
+    <div class="fs-foot">
+      <a class="fs-logo" style="font-size:20px;" href="{SITE_URL}" target="_blank">fore<b>see</b></a>
+      &nbsp;·&nbsp; See ahead. Save ahead.<br>
+      Fonti: prezzi MGP del GME tramite ENTSO-E Transparency Platform · dati meteo
+      <a href="https://open-meteo.com" target="_blank">Open-Meteo</a> (CC BY 4.0).
+      Storico e pipeline di raccolta: <a href="{GITHUB_REPO_URL}" target="_blank">GianfraG/gme-prices</a>.
+      Le previsioni hanno carattere indicativo.
+    </div>
+    """
+)
