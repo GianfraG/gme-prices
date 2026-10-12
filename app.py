@@ -282,6 +282,8 @@ COL_SOC = ZONE_COLORS["CSUD"]
 COL_RES = ZONE_COLORS["SARD"]
 COL_CARICA = ZONE_COLORS["CSUD"]
 COL_SCARICA = ZONE_COLORS["CNOR"]
+COL_TEMP_TES = ZONE_COLORS["SICI"]
+COL_TEMP_ARIA = ZONE_COLORS["CNOR"]
 
 
 def _leggi(nome):
@@ -425,6 +427,9 @@ def sezione_ottimizzazione():
         storico = storico[storico["datetime"] >= inizio]
     storico = storico.copy()
     piano = piano.copy()
+    for c in piano.columns:
+        if c not in storico.columns:
+            storico[c] = float("nan") if c != "price_source" else "pubblicato"
     for d in (storico, piano):
         if not d.empty:
             d["tes_scarica_kw"] = (-d["tes_net_kw"]).clip(lower=0)
@@ -432,8 +437,10 @@ def sezione_ottimizzazione():
 
     # --- 1. Storage termico ---------------------------------------------------
     st.markdown("##### Storage termico")
-    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
-                        row_heights=[0.25, 0.27, 0.22, 0.26])
+    con_temp = "tes_temp_c" in piano.columns
+    n = 5 if con_temp else 4
+    fig = make_subplots(rows=n, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+                        row_heights=[0.21, 0.23, 0.17, 0.17, 0.22] if con_temp else [0.25, 0.27, 0.22, 0.26])
     _prezzo(fig, 1, storico, piano, adesso)
     # ordine di disegno: barre, poi pompa di calore (sottile: senza vincoli di
     # tempo minimo di accensione il modello la modula a intermittenza), poi la
@@ -446,11 +453,21 @@ def sezione_ottimizzazione():
     _linea(fig, 2, p, f, "heat_demand_kw", "Domanda termica", COL_DOMANDA, "kW")
     p, f = _passato_futuro(storico, piano, "tes_soc_pct", adesso)
     _linea(fig, 3, p, f, "tes_soc_pct", "Stato di carica", COL_SOC, "%")
+    if con_temp:
+        p, f = _passato_futuro(storico, piano, "tes_temp_c", adesso)
+        _linea(fig, 4, p, f, "tes_temp_c", "Temperatura storage", COL_TEMP_TES, "°C")
+        # 85 °C: temperatura minima richiesta dal processo; 95 °C: mandata massima della pompa di calore
+        for y, testo in ((85, "processo 85 °C"), (95, "max 95 °C")):
+            fig.add_hline(y=y, line_dash="dot", line_color=INK_MUTED, line_width=1, row=4, col=1,
+                          annotation_text=testo, annotation_position="top left",
+                          annotation_font=dict(color=INK_MUTED, size=10))
+    r = n
     p, f = _passato_futuro(storico, piano, "tes_carica_kw", adesso)
-    _barre(fig, 4, p, f, "tes_carica_kw", "Carica", COL_CARICA, "kW")
+    _barre(fig, r, p, f, "tes_carica_kw", "Carica", COL_CARICA, "kW")
     p, f = _passato_futuro(storico, piano, "tes_scarica_kw", adesso)
-    _barre(fig, 4, p, f, "tes_scarica_kw", "Scarica", COL_SCARICA, "kW", segno=-1)
-    _finalizza(fig, adesso, 4, ["€/MWh", "kW termici", "Carica %", "kW termici"], 820)
+    _barre(fig, r, p, f, "tes_scarica_kw", "Scarica", COL_SCARICA, "kW", segno=-1)
+    titoli = ["€/MWh", "kW termici", "Carica %"] + (["°C"] if con_temp else []) + ["kW termici"]
+    _finalizza(fig, adesso, n, titoli, 960 if con_temp else 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -472,6 +489,29 @@ def sezione_ottimizzazione():
     _finalizza(fig, adesso, 4, ["kW elettrici", "€/MWh", "Carica %", "kW elettrici"], 820)
     fig.update_yaxes(range=[0, 105], row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- 3. Meteo al sito ------------------------------------------------------
+    if "air_temp_c" in piano.columns:
+        st.markdown("##### Meteo al sito")
+        st.caption("Modello meteorologico Open-Meteo per il punto del sito. Anche il tratto passato è una "
+                   "stima del modello (ultima previsione/analisi disponibile), non una misura di stazione.")
+        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
+                            row_heights=[0.25, 0.27, 0.25, 0.23])
+        p, f = _passato_futuro(storico, piano, "air_temp_c", adesso)
+        _linea(fig, 1, p, f, "air_temp_c", "Temperatura aria", COL_TEMP_ARIA, "°C")
+        p, f = _passato_futuro(storico, piano, "ghi_wm2", adesso)
+        _linea(fig, 2, p, f, "ghi_wm2", "Irraggiamento orizzontale", COL_PREZZO, "W/m²", fill="tozeroy")
+        p, f = _passato_futuro(storico, piano, "gti_wm2", adesso)
+        _linea(fig, 2, p, f, "gti_wm2", "Irraggiamento sul piano FV", ZONE_COLORS["SICI"], "W/m²")
+        p, f = _passato_futuro(storico, piano, "wind10_kmh", adesso)
+        _linea(fig, 3, p, f, "wind10_kmh", "Vento a 10 m", COL_PDC, "km/h")
+        p, f = _passato_futuro(storico, piano, "wind80_kmh", adesso)
+        _linea(fig, 3, p, f, "wind80_kmh", "Vento a 80 m", ZONE_COLORS["CALA"], "km/h")
+        p, f = _passato_futuro(storico, piano, "cloud_pct", adesso)
+        _linea(fig, 4, p, f, "cloud_pct", "Nuvolosità", COL_DOMANDA, "%", fill="tozeroy")
+        _finalizza(fig, adesso, 4, ["°C", "W/m²", "km/h", "Nuvolosità %"], 760)
+        fig.update_yaxes(range=[0, 105], row=4, col=1)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 try:
