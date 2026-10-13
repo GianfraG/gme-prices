@@ -32,6 +32,7 @@ RESULTS_BASE = os.environ.get(
     "FORESEE_RESULTS_BASE",
     "https://raw.githubusercontent.com/GianfraG/gme-prices/optimization-results",
 )
+SCHEMA_URL = "https://raw.githubusercontent.com/GianfraG/gme-prices/main/assets/schema_impianto.png"
 RISULTATI_VECCHI_MIN = 45
 ORE_PASSATO = 24
 ORE_FUTURO = 48
@@ -117,6 +118,8 @@ st.markdown(
       .fs-foot {{margin-top:3rem; padding-top:1.2rem; border-top:1px solid {BORDER}; color:{INK_MUTED};
                  font-size:.78rem; line-height:1.7;}}
       .fs-foot a {{color:{INK_SECONDARY}; text-decoration:none;}}
+      .fs-note a {{color:{BRAND} !important; text-decoration:none !important; font-weight:600; white-space:nowrap;}}
+      .fs-note a:hover {{text-decoration:underline !important;}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -509,7 +512,8 @@ def sezione_ottimizzazione():
          '<p class="fs-note">Pianificazione ottimizzata su orizzonte mobile di 48 h con passo di 15 minuti, '
          'aggiornata ogni 15 minuti. Accumulo termico con pompa di calore e batteria elettrica di un sito industriale; '
          'prezzo di riferimento zona SUD (MGP pubblicato o previsto). Linea continua: esercizio realizzato; '
-         'tratteggio: piano corrente. Profili di domanda del sito simulati.</p></div>')
+         'tratteggio: piano corrente. Profili di domanda del sito simulati. '
+         f'<a href="{SCHEMA_URL}" target="_blank" rel="noopener">Schema dell&#39;impianto&nbsp;&#8599;</a></p></div>')
     if opt is None:
         st.info("Risultati di ottimizzazione non disponibili al momento.")
         return
