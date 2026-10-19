@@ -115,6 +115,12 @@ st.markdown(
                  padding:.18rem .65rem; font-size:.76rem; font-variant-numeric:tabular-nums;}}
       .fs-chip.ok {{border-color:rgba(45,212,191,.45); color:{BRAND};}}
       .fs-chip.warn {{border-color:rgba(217,89,38,.6); color:#f08a5d;}}
+      .fs-table {{width:100%; border-collapse:collapse; font-size:.85rem; font-variant-numeric:tabular-nums;}}
+      .fs-table th {{color:{INK_MUTED}; font-weight:600; text-align:left; font-size:.72rem; letter-spacing:.08em;
+                     text-transform:uppercase; padding:.35rem .5rem; border-bottom:1px solid {BORDER};}}
+      .fs-table td {{color:{INK_SECONDARY}; padding:.38rem .5rem; border-bottom:1px solid {GRID}; vertical-align:top;}}
+      .fs-table td span {{color:{INK_MUTED};}}
+      .fs-table th:last-child, .fs-table td:last-child {{text-align:right; white-space:nowrap; color:{TEXT};}}
       .fs-foot {{margin-top:3rem; padding-top:1.2rem; border-top:1px solid {BORDER}; color:{INK_MUTED};
                  font-size:.78rem; line-height:1.7;}}
       .fs-foot a {{color:{INK_SECONDARY}; text-decoration:none;}}
@@ -615,6 +621,182 @@ try:
     sezione_ottimizzazione()
 except Exception:
     st.info("Sezione di ottimizzazione temporaneamente non disponibile.")
+
+
+# ---------------------------------------------------------------------------
+# 4. Flussi energetici (Sankey)
+# ---------------------------------------------------------------------------
+FLUSSI_COLONNE = ["grid_to_load_kw", "grid_to_hp_kw", "pv_to_load_kw", "pv_to_hp_kw", "pv_to_bess_kw",
+                  "pv_export_kw", "pv_conv_loss_kw", "bess_to_load_kw", "bess_to_hp_kw", "bess_loss_kw",
+                  "bess_net_store_kw", "hp_ambient_kw", "hp_to_tes_kw", "heat_dissipated_kw", "tes_loss_kw",
+                  "tes_net_kw", "heat_demand_kw", "el_demand_kw", "res_kw", "hp_el_kw"]
+
+
+def _rgba(hex_color, a):
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{a})"
+
+
+def _da_telefono():
+    """True se la pagina è aperta da uno smartphone (User-Agent)."""
+    try:
+        ua = st.context.headers.get("User-Agent", "") or ""
+    except Exception:
+        return False
+    return any(k in ua for k in ("Mobi", "Android", "iPhone"))
+
+
+def sezione_flussi():
+    html('<div class="fs-section"><p class="fs-eyebrow">Bilancio energetico</p>'
+         '<p class="fs-h2">Flussi di energia del sito</p>'
+         '<p class="fs-note">Energia scambiata tra sorgenti, accumuli e utenze nel periodo selezionato, in MWh. '
+         'Comprende immissione in rete, perdite di conversione e di accumulo, calore dissipato e variazione '
+         'netta dell\'energia accumulata. Ogni nodo è in equilibrio.</p></div>')
+    if opt is None:
+        st.info("Dati dei flussi non disponibili al momento.")
+        return
+    _, piano, storico = opt
+    if not set(FLUSSI_COLONNE) <= set(piano.columns):
+        st.info("Dati dei flussi non ancora disponibili.")
+        return
+    periodi = {"Ultime 24 h": ("storico", 24), "Ultimi 7 giorni": ("storico", 24 * 7),
+               "Prossime 48 h (piano)": ("piano", 48)}
+    scelta = st.radio("Periodo", list(periodi), horizontal=True, label_visibility="collapsed")
+    fonte, ore = periodi[scelta]
+    if fonte == "piano":
+        d = piano
+    else:
+        if not set(FLUSSI_COLONNE) <= set(storico.columns):
+            st.info("Storico dei flussi non ancora disponibile per questo periodo.")
+            return
+        d = storico[(storico["datetime"] >= adesso - pd.Timedelta(hours=ore)) & (storico["datetime"] < adesso)]
+    if d.empty:
+        st.info("Nessun dato nel periodo selezionato.")
+        return
+    passo_h = 0.25
+    e = {c: float(d[c].clip(lower=None).sum()) * passo_h / 1000 for c in FLUSSI_COLONNE}  # MWh
+
+    nodi = [  # (etichetta, colore)
+        ("Rete elettrica", "#9aa7b4"),            # 0
+        ("Fotovoltaico", ZONE_COLORS["SARD"]),    # 1
+        ("Calore dall'ambiente", ZONE_COLORS["CSUD"]),  # 2
+        ("Batteria (BESS)", BRAND),               # 3
+        ("Pompa di calore", ZONE_COLORS["NORD"]),  # 4
+        ("Accumulo termico (TES)", ZONE_COLORS["CNOR"]),  # 5
+        ("Carico elettrico", INK_SECONDARY),      # 6
+        ("Calore di processo", ZONE_COLORS["SICI"]),  # 7
+        ("Immissione in rete", "#9aa7b4"),        # 8
+        ("Perdite di conversione FV", INK_MUTED),  # 9
+        ("Perdite batteria", INK_MUTED),          # 10
+        ("Calore dissipato", INK_MUTED),          # 11
+        ("Perdite termiche TES", INK_MUTED),      # 12
+        ("Energia accumulata in BESS", BRAND),    # 13
+        ("Energia prelevata da BESS", BRAND),     # 14
+        ("Calore accumulato in TES", ZONE_COLORS["CNOR"]),  # 15
+        ("Calore prelevato da TES", ZONE_COLORS["CNOR"]),   # 16
+    ]
+    archi = [  # (sorgente, destinazione, MWh)
+        (0, 6, e["grid_to_load_kw"]), (0, 4, e["grid_to_hp_kw"]),
+        (1, 6, e["pv_to_load_kw"]), (1, 4, e["pv_to_hp_kw"]), (1, 3, e["pv_to_bess_kw"]),
+        (1, 8, e["pv_export_kw"]), (1, 9, e["pv_conv_loss_kw"]),
+        (3, 6, e["bess_to_load_kw"]), (3, 4, e["bess_to_hp_kw"]), (3, 10, e["bess_loss_kw"]),
+        (2, 4, e["hp_ambient_kw"]),
+        (4, 5, e["hp_to_tes_kw"]), (4, 11, e["heat_dissipated_kw"]),
+        (5, 7, e["heat_demand_kw"]), (5, 12, e["tes_loss_kw"]),
+    ]
+    if e["bess_net_store_kw"] >= 0:
+        archi.append((3, 13, e["bess_net_store_kw"]))
+    else:
+        archi.append((14, 3, -e["bess_net_store_kw"]))
+    if e["tes_net_kw"] >= 0:
+        archi.append((5, 15, e["tes_net_kw"]))
+    else:
+        archi.append((16, 5, -e["tes_net_kw"]))
+    soglia = 1e-4
+    archi = [a for a in archi if a[2] > soglia]
+    archi_dettaglio = list(archi)
+    mobile = _da_telefono()
+    if mobile:  # su telefono le quattro perdite confluiscono in un unico nodo
+        nodi.append(("Perdite", INK_MUTED))  # 17
+        perdite = {9, 10, 11, 12}
+        raggruppati = {}
+        for s_, t_, v in archi:
+            k = (s_, 17 if t_ in perdite else t_)
+            raggruppati[k] = raggruppati.get(k, 0) + v
+        archi = [(k[0], k[1], v) for k, v in raggruppati.items()]
+    usati = sorted({a[0] for a in archi} | {a[1] for a in archi})
+    mappa = {n: i for i, n in enumerate(usati)}
+    entrata = {n: sum(a[2] for a in archi if a[1] == n) for n in usati}
+    uscita = {n: sum(a[2] for a in archi if a[0] == n) for n in usati}
+    def _mwh(v):
+        return fmt_num(v, 2 if v < 1 else 1)
+    brevi = ["Rete", "FV", "Ambiente", "BESS", "Pompa di calore", "TES", "Carico el.", "Processo",
+             "Immissione", "Perdite FV", "Perdite BESS", "Dissipato", "Perdite TES",
+             "BESS +", "BESS −", "TES +", "TES −", "Perdite"]
+    if mobile:
+        # etichette solo per i nodi principali (>= 4% del nodo più grande): gli altri al tocco e in tabella
+        massimo = max(max(entrata[n], uscita[n]) for n in usati)
+        etichette = [f"{brevi[n]}<br>{_mwh(max(entrata[n], uscita[n]))}"
+                     if max(entrata[n], uscita[n]) >= 0.04 * massimo else "" for n in usati]
+    else:
+        etichette = [f"{nodi[n][0]}  {_mwh(max(entrata[n], uscita[n]))} MWh" for n in usati]
+    nomi_hover = [f"{nodi[n][0]} · {_mwh(max(entrata[n], uscita[n]))} MWh" for n in usati]
+    # colonne fisse: sorgenti | batteria | pompa di calore | accumulo termico | utenze e perdite
+    pos = {0: (0.001, 0.08), 1: (0.001, 0.38), 2: (0.001, 0.75), 14: (0.001, 0.97), 16: (0.001, 0.99),
+           3: (0.24, 0.45), 4: (0.48, 0.55), 5: (0.70, 0.58),
+           6: (0.999, 0.08), 7: (0.999, 0.48), 8: (0.999, 0.74), 9: (0.999, 0.78), 10: (0.999, 0.82),
+           13: (0.999, 0.86), 11: (0.999, 0.89), 12: (0.999, 0.92), 15: (0.999, 0.95)}
+
+    nodo = dict(label=etichette, color=[nodi[n][1] for n in usati], pad=14 if mobile else 22,
+                thickness=12 if mobile else 14, line=dict(color=BG, width=0.5), customdata=nomi_hover,
+                hovertemplate="%{customdata}<extra></extra>")
+    if not mobile:
+        nodo.update(x=[pos[n][0] for n in usati], y=[pos[n][1] for n in usati])
+    fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        orientation="v" if mobile else "h",
+        valueformat=",.2f", valuesuffix=" MWh",
+        node=nodo,
+        textfont=dict(color=TEXT, family=FONT, size=10 if mobile else 12, shadow="none"),
+        link=dict(source=[mappa[a[0]] for a in archi], target=[mappa[a[1]] for a in archi],
+                  value=[a[2] for a in archi], color=[_rgba(nodi[a[0]][1], 0.32) for a in archi],
+                  customdata=[f"{nodi[a[0]][0]} → {nodi[a[1]][0]}" for a in archi],
+                  hovertemplate="%{customdata}<br>%{value}<extra></extra>"),
+    ))
+    fig.update_layout(**CHART_LAYOUT, height=820 if mobile else 640)
+    fig.update_layout(font=dict(color=TEXT, family=FONT, size=11 if mobile else 12),
+                      margin=dict(t=10, l=4 if mobile else 10, r=30 if mobile else 10, b=30))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False} if mobile else None)
+    if mobile:
+        html('<p class="fs-note">Valori in MWh. Toccare un nodo o un flusso per il dettaglio; '
+             'elenco completo dei flussi nella tabella.</p>')
+
+    with st.expander("Dettaglio dei flussi", expanded=mobile):
+        righe = sorted(archi_dettaglio, key=lambda a: -a[2])
+        html('<table class="fs-table"><thead><tr><th>Flusso</th><th>MWh</th></tr></thead><tbody>' + "".join(
+            f'<tr><td>{nodi[a[0]][0]} <span>→</span> {nodi[a[1]][0]}</td><td>{fmt_num(a[2], 2)}</td></tr>'
+            for a in righe) + "</tbody></table>")
+
+    # indicatori sintetici del periodo
+    pv_tot = e["res_kw"]
+    autoconsumo = (1 - e["pv_export_kw"] / pv_tot) * 100 if pv_tot > 1e-6 else None
+    cop = (e["hp_ambient_kw"] + e["hp_el_kw"]) / e["hp_el_kw"] if e["hp_el_kw"] > 1e-6 else None
+    rete = e["grid_to_load_kw"] + e["grid_to_hp_kw"]
+    consumi = e["el_demand_kw"] + e["hp_el_kw"]
+    quota_rete = rete / consumi * 100 if consumi > 1e-6 else None
+    chips = [f"Prelievo da rete {fmt_num(rete, 1)} MWh"
+             + (f" · {fmt_num(quota_rete, 0)}% dei consumi elettrici" if quota_rete is not None else ""),
+             f"Produzione FV {fmt_num(pv_tot, 1)} MWh"
+             + (f" · autoconsumo {fmt_num(autoconsumo, 0)}%" if autoconsumo is not None else ""),
+             f"COP medio pompa di calore {fmt_num(cop, 2)}" if cop is not None else "COP medio n/d",
+             f"Perdite totali {fmt_num(e['pv_conv_loss_kw'] + e['bess_loss_kw'] + e['heat_dissipated_kw'] + e['tes_loss_kw'], 2)} MWh"]
+    html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for c in chips) + "</div>")
+
+
+try:
+    sezione_flussi()
+except Exception:
+    st.info("Sezione flussi energetici temporaneamente non disponibile.")
 
 # ---------------------------------------------------------------------------
 # Piè di pagina
