@@ -369,53 +369,54 @@ with st.expander("Dati tabellari (finestra visualizzata)"):
 # ---------------------------------------------------------------------------
 # 2. Distribuzione mensile
 # ---------------------------------------------------------------------------
-html('<div class="fs-section"><p class="fs-eyebrow">Statistiche</p><p class="fs-h2">Distribuzione mensile dei prezzi</p>'
-     '<p class="fs-note">Ultimi 24 mesi. Box: primo quartile, mediana, terzo quartile; baffi entro 1,5 × IQR. '
-     f'Zona {ZONA_PREVISTA} visibile di default, le altre selezionabili dalla legenda.</p></div>')
+def sezione_distribuzione():
+    html('<div class="fs-section"><p class="fs-eyebrow">Statistiche</p><p class="fs-h2">Distribuzione mensile dei prezzi</p>'
+         '<p class="fs-note">Ultimi 24 mesi. Box: primo quartile, mediana, terzo quartile; baffi entro 1,5 × IQR. '
+         f'Zona {ZONA_PREVISTA} visibile di default, le altre selezionabili dalla legenda.</p></div>')
 
-due_anni_fa = oggi - pd.DateOffset(years=2)
-df_2anni = df_mercato[(df_mercato["datetime"] >= due_anni_fa) & (df_mercato["datetime"] <= adesso)]
+    due_anni_fa = oggi - pd.DateOffset(years=2)
+    df_2anni = df_mercato[(df_mercato["datetime"] >= due_anni_fa) & (df_mercato["datetime"] <= adesso)]
 
-if zone_sel:
-    if df_2anni.empty:
-        st.info("Nessun dato storico disponibile per le zone selezionate.")
+    if zone_sel:
+        if df_2anni.empty:
+            st.info("Nessun dato storico disponibile per le zone selezionate.")
+        else:
+            box_long = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
+            box_long["mese"] = box_long["datetime"].dt.strftime("%Y-%m")
+            # Statistiche pre-calcolate lato server (Tukey 1.5*IQR): al browser
+            # arrivano poche righe aggregate invece di centinaia di migliaia di punti.
+            grouped = box_long.groupby(["zona", "mese"])["prezzo"]
+            stats = grouped.quantile(0.25).rename("q1").reset_index()
+            stats["mediana"] = grouped.median().values
+            stats["q3"] = grouped.quantile(0.75).values
+            iqr = stats["q3"] - stats["q1"]
+            stats["_lo_fence"] = stats["q1"] - 1.5 * iqr
+            stats["_hi_fence"] = stats["q3"] + 1.5 * iqr
+            entro_baffi = box_long.merge(stats[["zona", "mese", "_lo_fence", "_hi_fence"]], on=["zona", "mese"])
+            entro_baffi = entro_baffi[
+                (entro_baffi["prezzo"] >= entro_baffi["_lo_fence"]) & (entro_baffi["prezzo"] <= entro_baffi["_hi_fence"])
+            ]
+            baffi = entro_baffi.groupby(["zona", "mese"])["prezzo"].agg(baffo_min="min", baffo_max="max").reset_index()
+            stats = stats.merge(baffi, on=["zona", "mese"], how="left").sort_values("mese")
+            stats["baffo_min"] = stats["baffo_min"].fillna(stats["q1"])
+            stats["baffo_max"] = stats["baffo_max"].fillna(stats["q3"])
+
+            fig_box = go.Figure()
+            for zona in zone_sel:
+                sub = stats[stats["zona"] == zona]
+                fig_box.add_trace(go.Box(
+                    x=sub["mese"], q1=sub["q1"], median=sub["mediana"], q3=sub["q3"],
+                    lowerfence=sub["baffo_min"], upperfence=sub["baffo_max"],
+                    name=zona, marker_color=ZONE_COLORS.get(zona, INK_SECONDARY), line=dict(width=1.2),
+                    visible=True if zona == ZONA_PREVISTA else "legendonly",
+                ))
+            fig_box.update_layout(boxmode="group")
+            fig_box.update_xaxes(tickangle=45, **AXIS_STYLE)
+            fig_box.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
+            fig_box.update_layout(**CHART_LAYOUT, height=440)
+            st.plotly_chart(fig_box, use_container_width=True)
     else:
-        box_long = df_2anni.melt(id_vars="datetime", value_vars=zone_sel, var_name="zona", value_name="prezzo")
-        box_long["mese"] = box_long["datetime"].dt.strftime("%Y-%m")
-        # Statistiche pre-calcolate lato server (Tukey 1.5*IQR): al browser
-        # arrivano poche righe aggregate invece di centinaia di migliaia di punti.
-        grouped = box_long.groupby(["zona", "mese"])["prezzo"]
-        stats = grouped.quantile(0.25).rename("q1").reset_index()
-        stats["mediana"] = grouped.median().values
-        stats["q3"] = grouped.quantile(0.75).values
-        iqr = stats["q3"] - stats["q1"]
-        stats["_lo_fence"] = stats["q1"] - 1.5 * iqr
-        stats["_hi_fence"] = stats["q3"] + 1.5 * iqr
-        entro_baffi = box_long.merge(stats[["zona", "mese", "_lo_fence", "_hi_fence"]], on=["zona", "mese"])
-        entro_baffi = entro_baffi[
-            (entro_baffi["prezzo"] >= entro_baffi["_lo_fence"]) & (entro_baffi["prezzo"] <= entro_baffi["_hi_fence"])
-        ]
-        baffi = entro_baffi.groupby(["zona", "mese"])["prezzo"].agg(baffo_min="min", baffo_max="max").reset_index()
-        stats = stats.merge(baffi, on=["zona", "mese"], how="left").sort_values("mese")
-        stats["baffo_min"] = stats["baffo_min"].fillna(stats["q1"])
-        stats["baffo_max"] = stats["baffo_max"].fillna(stats["q3"])
-
-        fig_box = go.Figure()
-        for zona in zone_sel:
-            sub = stats[stats["zona"] == zona]
-            fig_box.add_trace(go.Box(
-                x=sub["mese"], q1=sub["q1"], median=sub["mediana"], q3=sub["q3"],
-                lowerfence=sub["baffo_min"], upperfence=sub["baffo_max"],
-                name=zona, marker_color=ZONE_COLORS.get(zona, INK_SECONDARY), line=dict(width=1.2),
-                visible=True if zona == ZONA_PREVISTA else "legendonly",
-            ))
-        fig_box.update_layout(boxmode="group")
-        fig_box.update_xaxes(tickangle=45, **AXIS_STYLE)
-        fig_box.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
-        fig_box.update_layout(**CHART_LAYOUT, height=440)
-        st.plotly_chart(fig_box, use_container_width=True)
-else:
-    st.info("Selezionare almeno una zona.")
+        st.info("Selezionare almeno una zona.")
 
 
 # ---------------------------------------------------------------------------
@@ -617,12 +618,6 @@ def sezione_ottimizzazione():
         st.plotly_chart(fig, use_container_width=True)
 
 
-try:
-    sezione_ottimizzazione()
-except Exception:
-    st.info("Sezione di ottimizzazione temporaneamente non disponibile.")
-
-
 # ---------------------------------------------------------------------------
 # 4. Flussi energetici (Sankey)
 # ---------------------------------------------------------------------------
@@ -793,10 +788,475 @@ def sezione_flussi():
     html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for c in chips) + "</div>")
 
 
+# ---------------------------------------------------------------------------
+# 5. Impianto in tempo reale (schema animato)
+# ---------------------------------------------------------------------------
+IMPIANTO_COLONNE = ["res_kw", "grid_import_kw", "el_demand_kw", "heat_demand_kw", "hp_heat_kw", "hp_el_kw",
+                    "tes_soc_pct", "tes_temp_c", "bess_soc_pct", "bess_charge_kw", "bess_discharge_kw",
+                    "grid_to_load_kw", "grid_to_hp_kw", "pv_to_load_kw", "pv_to_hp_kw", "pv_to_bess_kw",
+                    "pv_export_kw", "bess_to_load_kw", "bess_to_hp_kw", "hp_ambient_kw", "hp_to_tes_kw",
+                    "price_eur_mwh"]
+
+SCHEMA_HTML = r"""
+<div id="fs-plant">
+<style>
+  #fs-plant {font-family: Helvetica Neue, Helvetica, Arial, sans-serif; color: __TEXT__; background: transparent;}
+  #fs-plant .wrap {overflow-x: auto; -webkit-overflow-scrolling: touch;}
+  #fs-plant svg {width: __SVGW__; max-width: 1000px; height: auto; display: block; margin: 0 auto;}
+  #fs-plant .hint {font-size: 12px; color: __MUTED__; margin: 2px 0 0 0; display: __HINT__;}
+  .lbl {font-size: 15px; fill: __INK2__;}
+  .val {font-size: 17px; font-weight: 700; fill: __TEXT__;}
+  .sml {font-size: 13px; fill: __MUTED__;}
+  .flowv {font-size: 14px; font-weight: 700;}
+  .anim {animation: fsdash linear infinite;}
+  @keyframes fsdash {to {stroke-dashoffset: -44;}}
+  .cl {animation: fsdrift 16s ease-in-out infinite alternate;}
+  @keyframes fsdrift {from {transform: translateX(-14px);} to {transform: translateX(14px);}}
+  .tw {animation: fstw 3.2s ease-in-out infinite;}
+  @keyframes fstw {0%, 100% {opacity: 0.25;} 50% {opacity: 1;}}
+  .big {font-size: 27px; font-weight: 700; fill: __TEXT__;}
+  .cap {font-size: 11.5px; font-weight: 700; letter-spacing: 1.4px; fill: __MUTED__;}
+  .ctr {display: flex; align-items: center; gap: 10px; margin: 6px auto 0 auto; flex-wrap: wrap; max-width: 1000px;}
+  .ctr button {background: __SURFACE__; color: __TEXT__; border: 1px solid __BORDER__; border-radius: 999px;
+               padding: 5px 14px; font-size: 13px; cursor: pointer;}
+  .ctr button.on {border-color: __BRAND__; color: __BRAND__;}
+  .ctr input[type=range] {flex: 1; min-width: 160px; accent-color: __BRAND__;}
+  .ctr .t {font-size: 13px; color: __INK2__; min-width: 230px; font-variant-numeric: tabular-nums;}
+  .ctr .t b {color: __TEXT__;}
+</style>
+<div class="wrap"><svg viewBox="0 0 1000 680" id="fs-svg">
+  <defs id="fs-defs"></defs>
+  <g id="fs-sky"></g>
+  <g id="fs-edges"></g>
+  <g id="fs-nodes"></g>
+</svg></div>
+<p class="hint">← scorri lo schema →</p>
+<div class="ctr">
+  <button id="fs-play">▶ Play</button>
+  <button id="fs-live" class="on">Adesso</button>
+  <input type="range" id="fs-slider" min="0" max="0" value="0">
+  <span class="t" id="fs-time"></span>
+</div>
+</div>
+<script>
+const D = __DATA__;
+const NOW = __NOW__;
+const C = __COLORS__;
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("fs-svg");
+const gE = document.getElementById("fs-edges"), gN = document.getElementById("fs-nodes"), defs = document.getElementById("fs-defs");
+function el(tag, attrs, parent) {const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e;}
+function txt(x, y, s, cls, parent, anchor) {const t = el("text", {x: x, y: y, class: cls, "text-anchor": anchor || "middle"}, parent); t.textContent = s; return t;}
+function fmt(v) {return Math.round(v).toLocaleString("it-IT");}
+
+// --- frecce (marker) per colore
+["pv", "grid", "bess", "heat", "amb"].forEach(k => {
+  const m = el("marker", {id: "ar-" + k, viewBox: "0 0 10 10", refX: 7, refY: 5, markerWidth: 3.2, markerHeight: 3.2, orient: "auto-start-reverse"}, defs);
+  el("path", {d: "M0,0 L10,5 L0,10 z", fill: C[k]}, m);
+});
+
+// --- collegamenti del layout d'impianto
+const E = [
+  {k: "pv_to_load_kw",   c: "pv",   p: [[245,128],[245,350],[770,350]], lx: 520, ly: 340},
+  {k: "pv_to_hp_kw",     c: "pv",   p: [[222,128],[222,460]],           lx: 236, ly: 420, a: "start"},
+  {k: "pv_to_bess_kw",   c: "pv",   p: [[292,82],[585,82],[585,168]],   lx: 440, ly: 72},
+  {k: "pv_export_kw",    c: "pv",   p: [[198,128],[198,205],[82,205],[82,250]], lx: 140, ly: 195},
+  {k: "bess_to_load_kw", c: "bess", p: [[600,232],[600,326],[770,326]], lx: 690, ly: 316},
+  {k: "bess_to_hp_kw",   c: "bess", p: [[548,205],[278,205],[278,460]], lx: 410, ly: 195},
+  {k: "grid_to_load_kw", c: "grid", p: [[122,300],[770,300]],           lx: 520, ly: 290},
+  {k: "grid_to_hp_kw",   c: "grid", p: [[102,362],[102,440],[190,440],[190,460]], lx: 146, ly: 430},
+  {k: "hp_ambient_kw",   c: "amb",  p: [[112,545],[168,545]],           lx: 140, ly: 568},
+  {k: "hp_to_tes_kw",    c: "heat", p: [[330,540],[510,540]],           lx: 420, ly: 528},
+  {k: "heat_demand_kw",  c: "heat", p: [[648,525],[798,525]],           lx: 723, ly: 513},
+];
+E.forEach(e => {
+  const pts = e.p.map(q => q.join(",")).join(" ");
+  e.base = el("polyline", {points: pts, fill: "none", stroke: C.off, "stroke-width": 3, "stroke-linejoin": "round"}, gE);
+  e.dash = el("polyline", {points: pts, fill: "none", stroke: C[e.c], "stroke-width": 3, "stroke-linejoin": "round",
+                           "stroke-dasharray": "10 12", class: "anim", "marker-end": "url(#ar-" + e.c + ")"}, gE);
+  e.lab = txt(e.lx, e.ly, "", "flowv", gE, e.a);
+});
+
+// --- cielo dinamico (dietro a tutto)
+const gS = document.getElementById("fs-sky");
+const lg = el("linearGradient", {id: "skyg", x1: 0, y1: 0, x2: 0, y2: 1}, defs);
+const sk0 = el("stop", {offset: "0%", "stop-color": "#0b1730", "stop-opacity": 0.0}, lg);
+const sk1 = el("stop", {offset: "22%", "stop-color": "#0b1730", "stop-opacity": 0.95}, lg);
+const sk2 = el("stop", {offset: "100%", "stop-color": "#0b1730", "stop-opacity": 0}, lg);
+const hg = el("linearGradient", {id: "skyh", x1: 0, y1: 0, x2: 1, y2: 0}, defs);
+[[0, 0], [0.12, 1], [0.88, 1], [1, 0]].forEach(([o, a]) => el("stop", {offset: o, "stop-color": "#ffffff", "stop-opacity": a}, hg));
+const mk = el("mask", {id: "skym", maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 1000, height: 260}, defs);
+el("rect", {x: 0, y: 0, width: 1000, height: 260, fill: "url(#skyh)"}, mk);
+el("rect", {x: 0, y: 0, width: 1000, height: 260, fill: "url(#skyg)", mask: "url(#skym)"}, gS);
+const stars = [[40,30],[95,70],[330,22],[420,58],[480,18],[560,46],[640,20],[700,66],[260,38],[380,92],[515,104],[605,118],[160,16],[455,130]]
+  .map((p, k) => {const s = el("circle", {cx: p[0], cy: p[1], r: k % 3 === 0 ? 1.9 : 1.2, fill: "#ffffff", class: "tw"}, gS); s.style.animationDelay = (k * 0.41) + "s"; return s;});
+const sun = el("g", {}, gS);
+el("circle", {r: 30, fill: "#f5c542", opacity: 0.16}, sun);
+el("circle", {r: 15, fill: "#f5c542"}, sun);
+for (let k = 0; k < 8; k++) {const a = k * Math.PI / 4; el("line", {x1: 20 * Math.cos(a), y1: 20 * Math.sin(a), x2: 27 * Math.cos(a), y2: 27 * Math.sin(a), stroke: "#f5c542", "stroke-width": 2.5, "stroke-linecap": "round"}, sun);}
+const moon = el("g", {}, gS);
+el("circle", {r: 13, fill: "#e8eef3"}, moon);
+const moonMask = el("circle", {cx: 6, cy: -4, r: 12, fill: "#0b1730"}, moon);
+function mkCloud(x, y, s) {
+  const w = el("g", {transform: "translate(" + x + "," + y + ") scale(" + s + ")"}, gS);
+  const g = el("g", {class: "cl"}, w);
+  [["ellipse", {cx: 0, cy: 9, rx: 36, ry: 13}], ["circle", {cx: -13, cy: 0, r: 14}], ["circle", {cx: 7, cy: -6, r: 19}], ["circle", {cx: 26, cy: 4, r: 12}]]
+    .forEach(([t, a]) => el(t, a, g));
+  g.style.animationDelay = (-x / 40) + "s";
+  return g;
+}
+const clouds = [mkCloud(250, 34, 1.0), mkCloud(470, 70, 0.85), mkCloud(640, 30, 1.1)];
+// scheda meteo
+el("rect", {x: 770, y: 146, width: 220, height: 44, rx: 10, fill: C.surface, stroke: C.border, "stroke-width": 1.5}, gN);
+el("rect", {x: 790, y: 154, width: 8, height: 22, rx: 4, fill: "none", stroke: C.ink2, "stroke-width": 2}, gN);
+el("circle", {cx: 794, cy: 180, r: 6, fill: C.heat}, gN);
+const thermoFill = el("rect", {x: 792, y: 166, width: 4, height: 12, fill: C.heat}, gN);
+const tMeteo = txt(810, 174, "", "lbl", gN, "start");
+// scheda prezzo del quarto d'ora con mini-grafico 72 h
+el("rect", {x: 770, y: 8, width: 220, height: 130, rx: 10, fill: C.surface, stroke: C.border, "stroke-width": 1.5}, gN);
+txt(786, 30, "PREZZO SUD \u00b7 15 MIN", "cap", gN, "start");
+const tPrice = txt(786, 62, "", "big", gN, "start");
+const tPsrc = txt(786, 82, "", "sml", gN, "start");
+const SX0 = 786, SX1 = 974, SY0 = 92, SY1 = 128;
+const pv = D.map(d => d.price_eur_mwh == null ? 0 : d.price_eur_mwh);
+const pmin = Math.min(...pv), pmax = Math.max(...pv);
+const sxy = (k) => [SX0 + (SX1 - SX0) * k / Math.max(1, D.length - 1), SY1 - (SY1 - SY0) * (pv[k] - pmin) / Math.max(1, pmax - pmin)];
+let pPub = "", pFc = "";
+D.forEach((d, k) => {
+  const s = sxy(k).map(v => v.toFixed(1)).join(",") + " ";
+  if (d.price_source === "previsto") {
+    if (pFc === "" && k > 0) pFc = sxy(k - 1).map(v => v.toFixed(1)).join(",") + " ";
+    pFc += s;
+  } else if (pFc === "") pPub += s;
+});
+el("line", {x1: sxy(NOW)[0], y1: SY0 - 2, x2: sxy(NOW)[0], y2: SY1 + 2, stroke: C.muted, "stroke-width": 1, "stroke-dasharray": "2 2"}, gN);
+el("polyline", {points: pPub, fill: "none", stroke: C.price, "stroke-width": 1.8}, gN);
+if (pFc) el("polyline", {points: pFc, fill: "none", stroke: C.pricefc, "stroke-width": 1.8, "stroke-dasharray": "4 3"}, gN);
+const pDot = el("circle", {r: 4.5, fill: C.text, stroke: C.price, "stroke-width": 2}, gN);
+
+// --- nodi (icone)
+// fotovoltaico
+const gPV = el("g", {}, gN);
+el("polygon", {points: "190,62 292,62 280,118 178,118", fill: "#7cc7ec", stroke: "#2c6e9e", "stroke-width": 2}, gPV);
+for (let i = 1; i < 4; i++) el("line", {x1: 190 + i * 25.5 - i * 3, y1: 62, x2: 178 + i * 25.5 - i * 0, y2: 118, stroke: "#2c6e9e", "stroke-width": 1.5}, gPV);
+el("line", {x1: 184, y1: 90, x2: 286, y2: 90, stroke: "#2c6e9e", "stroke-width": 1.5}, gPV);
+const tPV = txt(168, 96, "", "val", gN, "end"); txt(168, 114, "Fotovoltaico", "lbl", gN, "end");
+// eolico (spento: 0 kW)
+const gW = el("g", {opacity: 0.45}, gN);
+el("line", {x1: 352, y1: 40, x2: 352, y2: 120, stroke: C.muted, "stroke-width": 4}, gW);
+[0, 120, 240].forEach(a => {const r = a * Math.PI / 180 - Math.PI / 2; el("line", {x1: 352, y1: 40, x2: 352 + 30 * Math.cos(r), y2: 40 + 30 * Math.sin(r), stroke: C.muted, "stroke-width": 4, "stroke-linecap": "round"}, gW);});
+txt(352, 150, "0 kW", "sml", gN); txt(352, 168, "Eolico", "sml", gN);
+// rete
+const gG = el("g", {}, gN);
+el("polyline", {points: "62,362 82,250 102,362", fill: "none", stroke: "#9aa7b4", "stroke-width": 3}, gG);
+el("line", {x1: 58, y1: 275, x2: 106, y2: 275, stroke: "#9aa7b4", "stroke-width": 3}, gG);
+el("line", {x1: 64, y1: 300, x2: 100, y2: 300, stroke: "#9aa7b4", "stroke-width": 3}, gG);
+el("polyline", {points: "70,330 96,300 72,300 94,330", fill: "none", stroke: "#9aa7b4", "stroke-width": 2}, gG);
+const tG = txt(94, 388, "", "val", gN, "end"); txt(94, 406, "Rete", "lbl", gN, "end");
+// batteria
+el("rect", {x: 548, y: 172, width: 102, height: 58, rx: 8, fill: C.surface, stroke: "#9aa7b4", "stroke-width": 3}, gN);
+el("rect", {x: 650, y: 190, width: 8, height: 22, rx: 2, fill: "#9aa7b4"}, gN);
+const bFill = el("rect", {x: 553, y: 177, width: 0, height: 48, rx: 5, fill: C.bess, opacity: 0.85}, gN);
+const tB = txt(599, 208, "", "val", gN);
+const tB2 = txt(712, 196, "", "sml", gN, "start"); txt(712, 214, "Batteria", "lbl", gN, "start");
+// pompa di calore: evaporatore (freddo), compressore, condensatore (caldo), valvola di laminazione
+el("rect", {x: 170, y: 462, width: 160, height: 136, rx: 12, fill: C.surface, stroke: C.border, "stroke-width": 2}, gN);
+el("polyline", {points: "199,492 199,480 301,480 301,492", fill: "none", stroke: C.ink2, "stroke-width": 2.5}, gN);
+el("polyline", {points: "199,560 199,574 301,574 301,560", fill: "none", stroke: C.ink2, "stroke-width": 2.5}, gN);
+el("polygon", {points: "238,472 238,488 250,480", fill: C.ink2}, gN);
+el("polygon", {points: "262,472 262,488 250,480", fill: C.ink2}, gN);
+el("rect", {x: 187, y: 492, width: 24, height: 68, rx: 5, fill: "#7cc7ec", stroke: "#2c6e9e", "stroke-width": 2}, gN);
+el("rect", {x: 289, y: 492, width: 24, height: 68, rx: 5, fill: "#e8743b", stroke: "#a8461b", "stroke-width": 2}, gN);
+el("circle", {cx: 250, cy: 574, r: 13, fill: C.surface, stroke: C.ink2, "stroke-width": 2.5}, gN);
+el("polygon", {points: "244,567 244,581 258,574", fill: C.ink2}, gN);
+el("polygon", {points: "222,577 222,571 228,574", fill: C.ink2}, gN);
+el("polygon", {points: "278,477 278,483 272,480", fill: C.ink2}, gN);
+txt(250, 532, "PdC", "sml", gN);
+const tH = txt(250, 622, "", "val", gN); const tH2 = txt(250, 641, "", "sml", gN);
+txt(250, 664, "Pompa di calore", "lbl", gN);
+txt(80, 532, "Ambiente", "sml", gN);
+// accumulo termico (serbatoio)
+el("rect", {x: 512, y: 448, width: 136, height: 170, rx: 22, fill: C.surface, stroke: C.border, "stroke-width": 2}, gN);
+const tFill = el("rect", {x: 517, y: 613, width: 126, height: 0, rx: 18, fill: C.heat, opacity: 0.85}, gN);
+const tT = txt(580, 512, "", "val", gN); const tT2 = txt(580, 534, "", "lbl", gN);
+txt(580, 664, "Accumulo termico", "lbl", gN);
+// carichi
+el("rect", {x: 770, y: 282, width: 200, height: 86, rx: 10, fill: "rgba(63,174,73,0.16)", stroke: C.pv, "stroke-width": 2}, gN);
+txt(870, 314, "Carico elettrico", "lbl", gN); const tL = txt(870, 344, "", "val", gN);
+el("rect", {x: 798, y: 480, width: 182, height: 90, rx: 10, fill: "rgba(217,89,38,0.16)", stroke: C.heat, "stroke-width": 2}, gN);
+txt(889, 514, "Calore di processo", "lbl", gN); const tQ = txt(889, 544, "", "val", gN);
+
+function mix(a, b, f) {const p = s => [1, 3, 5].map(i => parseInt(s.substr(i, 2), 16)); const x = p(a), y = p(b); return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * Math.max(0, Math.min(1, f))).toString(16).padStart(2, "0")).join("");}
+const VMAX = 1200;
+function draw(i) {
+  const d = D[i];
+  E.forEach(e => {
+    const v = Math.max(0, d[e.k] || 0);
+    const on = v >= 1;
+    const w = 2.5 + 13 * Math.sqrt(Math.min(v, VMAX) / VMAX);
+    e.base.setAttribute("stroke", on ? C[e.c] : C.off); e.base.setAttribute("stroke-opacity", on ? 0.22 : 1);
+    e.base.setAttribute("stroke-width", on ? w : 2.5);
+    e.dash.setAttribute("stroke-width", Math.max(2.5, w * 0.62));
+    e.dash.style.display = on ? "" : "none";
+    e.dash.style.animationDuration = (2.6 - 1.8 * Math.sqrt(Math.min(v, VMAX) / VMAX)).toFixed(2) + "s";
+    e.lab.textContent = on ? fmt(v) + " kW" : "";
+    e.lab.setAttribute("fill", C[e.c]);
+  });
+  tPV.textContent = fmt(d.res_kw) + " kW";
+  tG.textContent = d.pv_export_kw >= 1 ? "↑ " + fmt(d.pv_export_kw) + " kW" : "↓ " + fmt(d.grid_import_kw) + " kW";
+  const soc = Math.max(0, Math.min(100, d.bess_soc_pct));
+  bFill.setAttribute("width", 92 * soc / 100);
+  tB.textContent = Math.round(soc) + "%";
+  tB2.textContent = d.bess_charge_kw >= 1 ? "carica " + fmt(d.bess_charge_kw) + " kW" : (d.bess_discharge_kw >= 1 ? "scarica " + fmt(d.bess_discharge_kw) + " kW" : "a riposo");
+  tH.textContent = fmt(d.hp_heat_kw) + " kW termici";
+  tH2.textContent = fmt(d.hp_el_kw) + " kW elettrici assorbiti";
+  const s2 = Math.max(0, Math.min(100, d.tes_soc_pct));
+  const hh = 160 * s2 / 100;
+  tFill.setAttribute("y", 613 - hh); tFill.setAttribute("height", hh);
+  tFill.setAttribute("fill", mix(C.cold, C.heat, s2 / 100));
+  tT.textContent = (d.tes_temp_c != null ? d.tes_temp_c.toFixed(1) : "–") + " °C";
+  tT2.textContent = "carica " + Math.round(s2) + "%";
+  tL.textContent = fmt(d.el_demand_kw) + " kW";
+  tQ.textContent = fmt(d.heat_demand_kw) + " kW";
+  const fase = i < NOW ? "eseguito" : (i === NOW ? "in corso" : "piano");
+  // cielo
+  const day = d.sun_f != null && d.sun_f >= 0 && d.sun_f <= 1;
+  const cc = d.cloud_pct == null ? 0 : d.cloud_pct;
+  let top;
+  if (day) {
+    const elev = Math.sin(Math.PI * d.sun_f);
+    top = mix(mix("#6b3f4f", "#1f5a82", Math.min(1, elev * 2.4)), "#3d4a57", cc / 160);
+    sun.setAttribute("transform", "translate(" + (70 + 640 * d.sun_f).toFixed(1) + "," + (150 - 118 * elev).toFixed(1) + ")");
+    sun.style.display = ""; sun.setAttribute("opacity", (1 - 0.55 * cc / 100).toFixed(2));
+    moon.style.display = "none";
+    stars.forEach(s => s.style.display = "none");
+  } else {
+    top = mix("#0b1730", "#252c36", cc / 140);
+    sun.style.display = "none";
+    const mf = d.moon_f == null ? 0.5 : d.moon_f;
+    moon.setAttribute("transform", "translate(" + (70 + 640 * mf).toFixed(1) + "," + (140 - 100 * Math.sin(Math.PI * mf)).toFixed(1) + ")");
+    moon.style.display = "";
+    stars.forEach((s, k) => s.style.display = (k / stars.length) < (1 - cc / 100) ? "" : "none");
+  }
+  sk0.setAttribute("stop-color", top); sk1.setAttribute("stop-color", top); sk2.setAttribute("stop-color", top);
+  moonMask.setAttribute("fill", top);
+  const nc = cc < 15 ? 0 : cc < 40 ? 1 : cc < 70 ? 2 : 3;
+  clouds.forEach((g, k) => {g.style.display = k < nc ? "" : "none"; g.setAttribute("fill", day ? "#dfe7ee" : "#5f6d7c"); g.setAttribute("opacity", day ? 0.92 : 0.8);});
+  const descr = cc < 15 ? "sereno" : cc < 40 ? "poco nuvoloso" : cc < 70 ? "nuvoloso" : "coperto";
+  const ta = d.air_temp_c;
+  tMeteo.textContent = (ta == null ? "\u2013" : ta.toFixed(1).replace(".", ",") + " \u00b0C") + " \u00b7 " + descr;
+  const tf = ta == null ? 0.5 : Math.max(0, Math.min(1, (ta + 5) / 40));
+  thermoFill.setAttribute("y", 178 - 20 * tf); thermoFill.setAttribute("height", 20 * tf);
+  // prezzo del quarto d'ora
+  tPrice.textContent = fmt(d.price_eur_mwh) + " \u20ac/MWh";
+  tPsrc.textContent = d.price_source === "previsto" ? "previsione" : "MGP pubblicato";
+  tPsrc.setAttribute("fill", d.price_source === "previsto" ? C.pricefc : C.ink2);
+  const [px, py] = sxy(i); pDot.setAttribute("cx", px); pDot.setAttribute("cy", py);
+  pDot.setAttribute("stroke", d.price_source === "previsto" ? C.pricefc : C.price);
+  document.getElementById("fs-time").innerHTML = "<b>" + d.t + "</b> · " + fase + " · " + fmt(d.price_eur_mwh) + " €/MWh";
+  document.getElementById("fs-slider").value = i;
+  document.getElementById("fs-live").classList.toggle("on", i === NOW);
+}
+const sl = document.getElementById("fs-slider"); sl.max = D.length - 1;
+let cur = NOW, timer = null;
+sl.addEventListener("input", () => {cur = +sl.value; draw(cur);});
+document.getElementById("fs-live").onclick = () => {stop(); cur = NOW; draw(cur);};
+const pb = document.getElementById("fs-play");
+function stop() {if (timer) {clearInterval(timer); timer = null; pb.textContent = "▶ Play"; pb.classList.remove("on");}}
+pb.onclick = () => {
+  if (timer) {stop(); return;}
+  if (cur >= D.length - 1) cur = 0;
+  pb.textContent = "❚❚ Pausa"; pb.classList.add("on");
+  timer = setInterval(() => {cur += 1; if (cur >= D.length) {stop(); cur = D.length - 1;} draw(cur);}, 180);
+};
+draw(cur);
+</script>
+"""
+
+
+def _sole_luna(d: pd.DataFrame) -> dict:
+    """Posizione di sole e luna (0..1 lungo l'arco) per ogni istante: alba e
+    tramonto ricavati dall'irraggiamento del giorno (GHI > 5 W/m2), altrimenti 7-18."""
+    out = {}
+    if d.empty:
+        return out
+    ghi = d["ghi_wm2"] if "ghi_wm2" in d else pd.Series(0.0, index=d.index)
+    giorno = d["datetime"].dt.normalize()
+    q = pd.Timedelta(minutes=15)
+    finestre = {}
+    for g, idx in d.groupby(giorno).groups.items():
+        sole = d.loc[idx][ghi.loc[idx].fillna(0) > 5]["datetime"]
+        finestre[g] = (sole.min(), sole.max() + q) if len(sole) >= 8 else \
+            (g + pd.Timedelta(hours=7), g + pd.Timedelta(hours=18))
+    for t, g in zip(d["datetime"], giorno):
+        sr, ss = finestre[g]
+        if sr <= t <= ss:
+            out[t] = (round((t - sr) / (ss - sr), 4), None)
+        else:
+            notte = pd.Timedelta(days=1) - (ss - sr)
+            inizio = ss if t > ss else ss - pd.Timedelta(days=1)
+            out[t] = (None, round(min(max((t - inizio) / notte, 0), 1), 4))
+    return out
+
+
+def sezione_impianto():
+    import streamlit.components.v1 as components
+
+    html('<div class="fs-section"><p class="fs-eyebrow">Impianto</p>'
+         '<p class="fs-h2">Impianto in tempo reale</p>'
+         '<p class="fs-note">Flussi istantanei di energia nel quarto d\'ora in corso; lo spessore delle frecce è '
+         'proporzionale alla potenza. Il cursore percorre le ultime 24 ore eseguite e le 48 ore del piano.</p></div>')
+    if opt is None:
+        st.info("Dati dell'impianto non disponibili al momento.")
+        return
+    _, piano, storico = opt
+    if not set(IMPIANTO_COLONNE) <= set(piano.columns):
+        st.info("Dati dell'impianto non ancora disponibili.")
+        return
+    inizio = piano["datetime"].min()
+    passato = storico[(storico["datetime"] >= inizio - pd.Timedelta(hours=24)) & (storico["datetime"] < inizio)] \
+        if set(IMPIANTO_COLONNE) <= set(storico.columns) else storico.iloc[0:0]
+    d = pd.concat([passato, piano], ignore_index=True)
+    now_idx = len(passato)
+    giorni = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
+    astro = _sole_luna(d)
+    righe = []
+    for _, r in d.iterrows():
+        x = {c: (None if pd.isna(r[c]) else round(float(r[c]), 2)) for c in IMPIANTO_COLONNE}
+        x["heat_demand_kw"] = x["heat_demand_kw"] or 0.0
+        x["t"] = f"{giorni[r['datetime'].dayofweek]} {r['datetime']:%d/%m %H:%M}"
+        x["price_source"] = r.get("price_source", "pubblicato")
+        for c in ("air_temp_c", "cloud_pct"):
+            x[c] = None if c not in r or pd.isna(r[c]) else round(float(r[c]), 1)
+        x["sun_f"], x["moon_f"] = astro.get(r["datetime"], (None, None))
+        righe.append(x)
+    colori = dict(pv=ZONE_COLORS["SARD"], grid="#9aa7b4", bess=BRAND, heat=ZONE_COLORS["CNOR"], ink2=INK_SECONDARY,
+                  amb=ZONE_COLORS["CSUD"], hp=ZONE_COLORS["NORD"], off=GRID, muted=INK_MUTED,
+                  price=ZONE_COLORS["SUD"], pricefc="#f2b544", text=TEXT,
+                  surface=SURFACE, border=BORDER, cold="#2c6e9e")
+    pagina = (SCHEMA_HTML.replace("__DATA__", json.dumps(righe)).replace("__NOW__", str(now_idx))
+              .replace("__COLORS__", json.dumps(colori)).replace("__TEXT__", TEXT).replace("__INK2__", INK_SECONDARY)
+              .replace("__MUTED__", INK_MUTED).replace("__SURFACE__", SURFACE).replace("__BORDER__", BORDER)
+              .replace("__BRAND__", BRAND))
+    mobile = _da_telefono()
+    pagina = pagina.replace("__SVGW__", "760px" if mobile else "100%").replace("__HINT__", "block" if mobile else "none")
+    components.html(pagina, height=640 if mobile else 770, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
+# 6. Risparmio
+# ---------------------------------------------------------------------------
+def sezione_risparmio():
+    html('<div class="fs-section"><p class="fs-eyebrow">Risultati</p><p class="fs-h2">Risparmio</p>'
+         '<p class="fs-note">Costo dell\'energia prelevata dalla rete rispetto al caso di riferimento: pompa di calore '
+         'che produce in ogni istante il calore richiesto dal processo e batteria inattiva, con gli stessi prezzi, '
+         'la stessa domanda e la stessa produzione fotovoltaica. Il risparmio previsto usa i prezzi MGP pubblicati e, '
+         'oltre, i prezzi previsti.</p></div>')
+    if opt is None:
+        st.info("Dati non disponibili al momento.")
+        return
+    _, piano, storico = opt
+    if "ref_grid_import_kw" not in piano.columns or "ref_grid_import_kw" not in storico.columns:
+        st.info("Indicatori di risparmio non ancora disponibili.")
+        return
+    inizio = piano["datetime"].min()
+    pas = storico[storico["datetime"] < inizio].copy()
+    fut = piano.copy()
+    for d in (pas, fut):
+        d["c_opt"] = d["grid_import_kw"] * d["price_eur_mwh"] / 1000 * 0.25
+        d["c_ref"] = d["ref_grid_import_kw"] * d["price_eur_mwh"] / 1000 * 0.25
+        d["giorno"] = d["datetime"].dt.normalize()
+    gp = pas.groupby("giorno")[["c_opt", "c_ref"]].sum()
+    gf = fut.groupby("giorno")[["c_opt", "c_ref"]].sum()
+    # solo giornate complete (>= 90 quarti d'ora), tranne oggi che è parziale per definizione
+    n_p, n_f = pas.groupby("giorno").size(), fut.groupby("giorno").size()
+    oggi_d = adesso.normalize()
+    gp = gp[(n_p.reindex(gp.index) >= 90) | (gp.index == oggi_d)]
+    gf = gf[(n_f.reindex(gf.index) >= 90) | (gf.index == oggi_d)]
+    gp["sav"] = gp["c_ref"] - gp["c_opt"]
+    gf["sav"] = gf["c_ref"] - gf["c_opt"]
+    oggi_d = adesso.normalize()
+    ieri_d = oggi_d - pd.Timedelta(days=1)
+    sav_oggi = float(gp["sav"].get(oggi_d, 0.0))
+    sav_oggi_fine = sav_oggi + float(fut[fut["giorno"] == oggi_d].eval("c_ref - c_opt").sum())
+    sett = gp[(gp.index > oggi_d - pd.Timedelta(days=7)) & (gp.index < oggi_d)]
+    completi = gp[gp.index < oggi_d]
+    medio14 = completi.tail(14)["sav"].mean() if len(completi) else float("nan")
+    tot = gp["sav"].sum()
+    fut_sav, fut_ref = fut["c_ref"].sum() - fut["c_opt"].sum(), fut["c_ref"].sum()
+    pct = lambda s, r: f"{s / r:.1%}".replace(".", ",") if r > 0 else "—"
+    kpi = [
+        ("Risparmio oggi", f"€ {fmt_num(sav_oggi, 0)}", f"previsto a fine giornata € {fmt_num(sav_oggi_fine, 0)}"),
+        ("Risparmio ieri", f"€ {fmt_num(gp['sav'].get(ieri_d, float('nan')), 0)}",
+         f"{pct(gp['sav'].get(ieri_d, 0), gp['c_ref'].get(ieri_d, 0))} del costo di riferimento"),
+        ("Ultimi 7 giorni", f"€ {fmt_num(sett['sav'].sum(), 0)}", f"{pct(sett['sav'].sum(), sett['c_ref'].sum())} · "
+         f"media € {fmt_num(sett['sav'].mean(), 0)} al giorno"),
+        (f"Dal {gp.index.min():%d/%m}", f"€ {fmt_num(tot, 0)}", f"{pct(tot, gp['c_ref'].sum())} su {len(gp)} giorni"),
+        ("Previsto prossime 48 h", f"€ {fmt_num(fut_sav, 0)}", f"{pct(fut_sav, fut_ref)} del costo di riferimento"),
+        ("Proiezione annua", f"€ {fmt_num(medio14 * 365 / 1000, 0)} k", "stima su media ultimi 14 giorni"),
+    ]
+    html('<div class="fs-kpis">' + "".join(
+        f'<div class="fs-kpi"><div class="l">{l}</div><div class="v">{v}</div><div class="d">{dd}</div></div>'
+        for l, v, dd in kpi) + "</div>")
+
+    # risparmio giornaliero: realizzato, oggi (parziale + piano), giorni del piano
+    gg = gp.tail(21).copy()
+    gg["tipo"] = "realizzato"
+    oltre = gf[gf.index > oggi_d].copy()
+    oltre["tipo"] = "previsto"
+    fig = go.Figure()
+    real = gg[gg.index < oggi_d]
+    fig.add_trace(go.Bar(x=real.index, y=real["sav"], name="Risparmio realizzato", marker_color=BRAND, opacity=0.9,
+                         customdata=real[["c_ref", "c_opt"]].to_numpy(),
+                         hovertemplate="€ %{y:,.0f}<br>riferimento € %{customdata[0]:,.0f} · "
+                                       "ottimizzato € %{customdata[1]:,.0f}<extra></extra>"))
+    fig.add_trace(go.Bar(x=[oggi_d], y=[sav_oggi], name="Oggi (finora)", marker_color=BRAND, opacity=0.6,
+                         hovertemplate="€ %{y:,.0f} finora<extra></extra>"))
+    fig.add_trace(go.Bar(x=[oggi_d], y=[max(sav_oggi_fine - sav_oggi, 0)], name="Oggi (resto del piano)",
+                         marker_color=BRAND, opacity=0.25, hovertemplate="+ € %{y:,.0f} previsti<extra></extra>"))
+    if len(oltre):
+        fig.add_trace(go.Bar(x=oltre.index, y=oltre["sav"], name="Previsto (piano)", marker_color=BRAND, opacity=0.25,
+                             marker_line=dict(color=BRAND, width=1),
+                             hovertemplate="€ %{y:,.0f} previsti<extra></extra>"))
+    if pd.notna(medio14):
+        fig.add_hline(y=medio14, line_dash="dot", line_color=INK_MUTED, line_width=1,
+                      annotation_text=f"media 14 gg € {fmt_num(medio14, 0)}", annotation_position="top left",
+                      annotation_font=dict(color=INK_MUTED, size=10))
+    fig.update_layout(**CHART_LAYOUT, height=340, barmode="stack", bargap=0.25)
+    fig.update_layout(margin=dict(t=40, l=10, r=10, b=10))
+    fig.update_xaxes(tickformat="%d/%m", **AXIS_STYLE)
+    fig.update_yaxes(title_text="€ al giorno", **AXIS_STYLE)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False} if _da_telefono() else None)
+
+
+# ---------------------------------------------------------------------------
+# Ordine delle sezioni sotto il grafico dei prezzi
+# ---------------------------------------------------------------------------
+try:
+    sezione_impianto()
+except Exception:
+    st.info("Sezione impianto temporaneamente non disponibile.")
+
+try:
+    sezione_risparmio()
+except Exception:
+    st.info("Sezione risparmio temporaneamente non disponibile.")
+
+try:
+    sezione_distribuzione()
+except Exception:
+    st.info("Sezione distribuzione temporaneamente non disponibile.")
+
+try:
+    sezione_ottimizzazione()
+except Exception:
+    st.info("Sezione di ottimizzazione temporaneamente non disponibile.")
+
 try:
     sezione_flussi()
 except Exception:
     st.info("Sezione flussi energetici temporaneamente non disponibile.")
+
 
 # ---------------------------------------------------------------------------
 # Piè di pagina
