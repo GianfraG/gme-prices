@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import urllib.request
@@ -8,7 +9,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 st.set_page_config(
-    page_title="foresee — Prezzi zonali MGP",
+    page_title="foresee. — Prezzi dell'energia e previsione",
     layout="wide",
     page_icon="assets/favicon.png" if os.path.exists("assets/favicon.png") else "⚡",
 )
@@ -37,17 +38,21 @@ RISULTATI_VECCHI_MIN = 45
 ORE_PASSATO = 24
 ORE_FUTURO = 48
 
-# --- Design tokens (marchio foresee: blu notte + turchese) -------------------
-BRAND = "#2dd4bf"
-BG = "#0a1620"
-SURFACE = "#0f2030"
-BORDER = "#1c3346"
-TEXT = "#e8eef3"
-INK_SECONDARY = "#b4c3cf"
-INK_MUTED = "#7b8fa1"
-GRID = "#162b3c"
-AXIS = "#29465c"
-FONT = "Helvetica Neue, Helvetica, Arial, sans-serif"
+# --- Design tokens (marchio foresee: blu del logo su fondo chiaro) ----------
+BRAND = "#0B6BB3"
+ACCENT = "#1D96F1"
+BG = "#FBFDFF"
+SURFACE = "#FFFFFF"
+SURFACE_2 = "#EEF6FD"
+BORDER = "#DDEBF8"
+TEXT = "#073C65"
+INK_SECONDARY = "#4F6E8A"
+INK_MUTED = "#7A93AB"
+GRID = "#E6F0F9"
+AXIS = "#C3DCF2"
+FONT = "Manrope, system-ui, -apple-system, Segoe UI, sans-serif"
+FONT_H = "Fraunces, Georgia, serif"
+LOGO_FILE = "assets/logo.svg"
 
 # Palette categoriale delle zone (validata per contrasto/daltonismo), ordine fisso
 ZONE_COLORS = {
@@ -75,7 +80,7 @@ CHART_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(color=INK_SECONDARY, family=FONT, size=12),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+                bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=INK_SECONDARY)),
     margin=dict(t=40, l=10, r=10, b=10),
     hovermode="x unified",
     hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(family=FONT, color=TEXT, size=12)),
@@ -86,46 +91,64 @@ AXIS_STYLE = dict(gridcolor=GRID, linecolor=AXIS, tickfont=dict(color=INK_MUTED,
 st.markdown(
     f"""
     <style>
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Manrope:wght@400;500;600;700&display=swap');
       #MainMenu, footer {{visibility: hidden;}}
       header[data-testid="stHeader"] {{background: transparent;}}
-      .block-container {{padding-top: 1.6rem; padding-bottom: 2rem; max-width: 1400px;}}
-      html, body, [class*="css"] {{font-family: {FONT};}}
-      .fs-top {{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.6rem;
-                padding-bottom:1rem; border-bottom:1px solid {BORDER}; margin-bottom:1.6rem;}}
-      a.fs-logo, a.fs-logo:hover, a.fs-logo:visited {{font-size:30px; font-weight:400; color:#ffffff !important;
-                letter-spacing:-0.01em; text-decoration:none !important;}}
-      a.fs-logo b {{font-weight:700; color:{BRAND} !important;}}
-      .fs-tag {{color:{INK_MUTED}; font-size:12px; letter-spacing:.14em; text-transform:uppercase;}}
-      .fs-eyebrow {{color:{BRAND}; font-size:11.5px; font-weight:700; letter-spacing:.16em;
-                    text-transform:uppercase; margin:0 0 .25rem 0;}}
-      .fs-h1 {{color:{TEXT}; font-size:1.9rem; font-weight:700; letter-spacing:-0.015em; margin:0 0 .3rem 0;}}
-      .fs-h2 {{color:{TEXT}; font-size:1.35rem; font-weight:700; letter-spacing:-0.01em; margin:0 0 .25rem 0;}}
-      .fs-h3 {{color:{TEXT}; font-size:1.02rem; font-weight:600; margin:1.2rem 0 .1rem 0;}}
-      .fs-sub {{color:{INK_SECONDARY}; font-size:.92rem; margin:0 0 .2rem 0; line-height:1.5;}}
-      .fs-note {{color:{INK_MUTED}; font-size:.8rem; margin:.1rem 0 .6rem 0; line-height:1.5;}}
-      .fs-section {{margin-top:2.4rem; padding-top:1.4rem; border-top:1px solid {BORDER};}}
-      .fs-kpis {{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.75rem; margin:1.1rem 0 1.2rem 0;}}
-      .fs-kpi {{background:{SURFACE}; border:1px solid {BORDER}; border-radius:10px; padding:.8rem 1rem;}}
-      .fs-kpi .l {{color:{INK_MUTED}; font-size:.72rem; letter-spacing:.1em; text-transform:uppercase;}}
-      .fs-kpi .v {{color:{TEXT}; font-size:1.55rem; font-weight:700; margin-top:.15rem; font-variant-numeric:tabular-nums;}}
-      .fs-kpi .v span {{color:{INK_MUTED}; font-size:.8rem; font-weight:400; margin-left:.25rem;}}
-      .fs-kpi .d {{color:{INK_MUTED}; font-size:.75rem; margin-top:.1rem;}}
-      .fs-chips {{display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0 .3rem 0;}}
+      .stApp {{background: linear-gradient(180deg, #F3F9FF 0, {BG} 420px);}}
+      .block-container {{padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1360px;}}
+      html, body, [class*="css"], .stMarkdown, .stRadio, .stMultiSelect {{font-family: {FONT};}}
+      .fs-top {{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.8rem;
+                padding:.55rem .7rem .55rem 1.2rem; margin-bottom:1.8rem; background:rgba(255,255,255,.9);
+                border:1px solid {BORDER}; border-radius:999px; box-shadow:0 10px 30px -18px rgba(7,60,101,.35);}}
+      .fs-top img {{height:34px; width:auto; display:block;}}
+      .fs-top .r {{display:flex; align-items:center; gap:.9rem; flex-wrap:wrap;}}
+      .fs-tag {{color:{INK_SECONDARY}; font-size:.85rem;}}
+      a.fs-btn, a.fs-btn:visited {{background:{BRAND}; color:#fff !important; border-radius:999px; padding:.5rem 1.05rem;
+                font-size:.85rem; font-weight:600; text-decoration:none !important; white-space:nowrap;}}
+      a.fs-btn:hover {{background:{TEXT};}}
+      .fs-eyebrow, div[data-testid="stMarkdownContainer"] p.fs-eyebrow {{color:{BRAND}; font-size:.8rem !important; font-weight:600; letter-spacing:.04em; margin:0 0 .35rem 0;}}
+      .fs-h1, div[data-testid="stMarkdownContainer"] p.fs-h1 {{font-family:{FONT_H}; color:{TEXT}; font-size:clamp(1.8rem, 3.4vw, 2.6rem) !important; font-weight:400;
+               letter-spacing:-0.02em; line-height:1.1 !important; margin:0 0 .5rem 0;}}
+      .fs-h2, div[data-testid="stMarkdownContainer"] p.fs-h2 {{font-family:{FONT_H}; color:{TEXT}; font-size:1.6rem !important; font-weight:400; letter-spacing:-0.015em; margin:0 0 .35rem 0;}}
+      .fs-h3, div[data-testid="stMarkdownContainer"] p.fs-h3 {{font-family:{FONT_H}; color:{TEXT}; font-size:1.2rem !important; font-weight:500; margin:1.6rem 0 .15rem 0;}}
+      .fs-sub, div[data-testid="stMarkdownContainer"] p.fs-sub {{color:{INK_SECONDARY}; font-size:1rem !important; margin:0 0 .2rem 0; line-height:1.55 !important; max-width:760px;}}
+      .fs-note, div[data-testid="stMarkdownContainer"] p.fs-note {{color:{INK_SECONDARY}; font-size:.86rem !important; margin:.1rem 0 .8rem 0; line-height:1.55 !important; max-width:900px;}}
+      .fs-section {{margin-top:.6rem; padding-top:.4rem;}}
+      .fs-kpis {{display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:.8rem; margin:1.2rem 0 1rem 0;}}
+      .fs-kpi {{background:{SURFACE}; border-radius:18px; padding:.95rem 1.1rem;
+                box-shadow:0 1px 0 {BORDER}, 0 18px 40px -30px rgba(7,60,101,.45);}}
+      .fs-kpi:nth-child(4n+2) {{background:#F5FAFE;}} .fs-kpi:nth-child(4n+3) {{background:#EEF6FD;}}
+      .fs-kpi:nth-child(4n+4) {{background:#E6F2FC;}}
+      .fs-kpi .l {{color:{INK_SECONDARY}; font-size:.78rem; font-weight:600;}}
+      .fs-kpi .v {{font-family:{FONT_H}; color:{BRAND}; font-size:1.9rem; font-weight:400; margin-top:.2rem;
+                   font-variant-numeric:tabular-nums; white-space:nowrap;}}
+      .fs-kpi .v span {{font-family:{FONT}; color:{INK_MUTED}; font-size:.8rem; margin-left:.3rem;}}
+      .fs-kpi .d {{color:{INK_MUTED}; font-size:.78rem; margin-top:.15rem;}}
+      .fs-chips {{display:flex; flex-wrap:wrap; gap:.4rem; margin:.4rem 0 .4rem 0;}}
       .fs-chip {{border:1px solid {BORDER}; background:{SURFACE}; color:{INK_SECONDARY}; border-radius:999px;
-                 padding:.18rem .65rem; font-size:.76rem; font-variant-numeric:tabular-nums;}}
-      .fs-chip.ok {{border-color:rgba(45,212,191,.45); color:{BRAND};}}
-      .fs-chip.warn {{border-color:rgba(217,89,38,.6); color:#f08a5d;}}
-      .fs-table {{width:100%; border-collapse:collapse; font-size:.85rem; font-variant-numeric:tabular-nums;}}
-      .fs-table th {{color:{INK_MUTED}; font-weight:600; text-align:left; font-size:.72rem; letter-spacing:.08em;
-                     text-transform:uppercase; padding:.35rem .5rem; border-bottom:1px solid {BORDER};}}
-      .fs-table td {{color:{INK_SECONDARY}; padding:.38rem .5rem; border-bottom:1px solid {GRID}; vertical-align:top;}}
+                 padding:.22rem .75rem; font-size:.78rem; font-variant-numeric:tabular-nums;}}
+      .fs-chip.ok {{border-color:rgba(11,107,179,.35); color:{BRAND};}}
+      .fs-chip.warn {{border-color:rgba(217,89,38,.5); color:#B4471A;}}
+      .fs-table {{width:100%; border-collapse:collapse; font-size:.86rem; font-variant-numeric:tabular-nums;}}
+      .fs-table th {{color:{INK_SECONDARY}; font-weight:600; text-align:left; font-size:.78rem;
+                     padding:.4rem .5rem; border-bottom:1px solid {AXIS};}}
+      .fs-table td {{color:{INK_SECONDARY}; padding:.4rem .5rem; border-bottom:1px solid {GRID}; vertical-align:top;}}
       .fs-table td span {{color:{INK_MUTED};}}
       .fs-table th:last-child, .fs-table td:last-child {{text-align:right; white-space:nowrap; color:{TEXT};}}
-      .fs-foot {{margin-top:3rem; padding-top:1.2rem; border-top:1px solid {BORDER}; color:{INK_MUTED};
-                 font-size:.78rem; line-height:1.7;}}
-      .fs-foot a {{color:{INK_SECONDARY}; text-decoration:none;}}
+      .stTabs [data-baseweb="tab-list"] {{gap:.3rem; border-bottom:1px solid {BORDER}; flex-wrap:nowrap; overflow-x:auto;}}
+      .stTabs [data-baseweb="tab"] {{font-family:{FONT}; font-weight:600; font-size:.95rem; color:{INK_SECONDARY};
+                                     padding:.6rem .95rem; border-radius:999px 999px 0 0; white-space:nowrap;}}
+      .stTabs [aria-selected="true"] {{color:{BRAND} !important;}}
+      .stTabs [data-baseweb="tab-highlight"] {{background:{BRAND};}}
+      .fs-foot {{margin-top:3.2rem; padding:1.6rem 0 .4rem 0; border-top:1px solid {BORDER}; color:{INK_SECONDARY};
+                 font-size:.82rem; line-height:1.7; display:flex; gap:1.6rem; align-items:flex-start; flex-wrap:wrap;}}
+      .fs-foot img {{height:54px; width:auto;}}
+      .fs-foot a {{color:{BRAND}; text-decoration:none;}}
       .fs-note a {{color:{BRAND} !important; text-decoration:none !important; font-weight:600; white-space:nowrap;}}
       .fs-note a:hover {{text-decoration:underline !important;}}
+      @media (max-width: 640px) {{ .fs-top {{border-radius:22px;}} .fs-tag {{display:none;}}
+        .fs-kpis {{grid-template-columns:1fr 1fr; gap:.55rem;}} .fs-kpi {{padding:.75rem .8rem;}}
+        .fs-kpi .v {{font-size:1.45rem;}} .fs-kpi .v span {{display:block; margin:0;}} }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -134,6 +157,20 @@ st.markdown(
 
 def html(s):
     st.markdown(s, unsafe_allow_html=True)
+
+
+@st.cache_data
+def logo_uri(path=LOGO_FILE):
+    try:
+        with open(path, "rb") as f:
+            return "data:image/svg+xml;base64," + base64.b64encode(f.read()).decode("ascii")
+    except OSError:
+        return None
+
+
+def logo_html(alt="foresee."):
+    uri = logo_uri()
+    return f'<img src="{uri}" alt="{alt}">' if uri else '<b style="font-family:Georgia,serif;font-size:26px;color:#0B6BB3">foresee.</b>'
 
 
 def fmt_num(v, dec=1):
@@ -197,12 +234,15 @@ def try_optimization():
 html(
     f"""
     <div class="fs-top">
-      <a class="fs-logo" href="{SITE_URL}" target="_blank">fore<b>see</b></a>
-      <div class="fs-tag">Market intelligence · Italia</div>
+      <a href="{SITE_URL}" target="_blank" rel="noopener" title="foresee.energy">{logo_html()}</a>
+      <div class="r"><span class="fs-tag">Mercato elettrico italiano · zone di offerta</span>
+        <a class="fs-btn" href="{SITE_URL}" target="_blank" rel="noopener">foresee.energy ↗</a></div>
     </div>
-    <p class="fs-eyebrow">Mercato elettrico · MGP</p>
-    <p class="fs-h1">Prezzi zonali del mercato del giorno prima</p>
-    <p class="fs-sub">Zone di offerta italiane, €/MWh. Risoluzione a 15 minuti dal 1° ottobre 2025, oraria in precedenza.</p>
+    <p class="fs-eyebrow">Dashboard prezzi</p>
+    <p class="fs-h1">Prezzi dell'energia elettrica e previsione</p>
+    <p class="fs-sub">Prezzi zonali del mercato del giorno prima (MGP) in €/MWh, la nostra previsione per la zona SUD
+    e la gestione predittiva degli accumuli di un sito industriale di esempio. Risoluzione a 15 minuti dal 1° ottobre 2025,
+    oraria in precedenza.</p>
     """
 )
 
@@ -269,102 +309,107 @@ html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for 
 # ---------------------------------------------------------------------------
 # 1. Andamento prezzi
 # ---------------------------------------------------------------------------
-html('<div class="fs-section"><p class="fs-eyebrow">Prezzi</p><p class="fs-h2">Andamento e previsione</p>'
-     '<p class="fs-note">Linea continua: prezzi realizzati. Puntinato: prezzi MGP già pubblicati per il giorno '
-     f'successivo. Oltre l\'ultimo giorno pubblicato: previsione per la zona {ZONA_PREVISTA} (tratteggio) con '
-     'intervallo di previsione all\'80% (area), stimato dagli errori storici per anticipo e fascia oraria.</p></div>')
+schede = st.tabs(["Prezzi e previsione", "Impianto in tempo reale", "Risparmio", "Accumuli",
+                  "Flussi di energia", "Statistiche"])
 
-zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
-df_finestra = df_mercato[(df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)]
+with schede[0]:
+    html('<div class="fs-section"><p class="fs-eyebrow">Prezzi</p><p class="fs-h2">Andamento e previsione</p>'
+         '<p class="fs-note">Linea continua: prezzi realizzati. Puntinato: prezzi MGP già pubblicati per il giorno '
+         f'successivo. Oltre l\'ultimo giorno pubblicato: previsione per la zona {ZONA_PREVISTA} (tratteggio) con '
+         'intervallo di previsione all\'80% (area), stimato dagli errori storici per anticipo e fascia oraria.</p></div>')
+
+    zone_sel = st.multiselect("Zone", colonne_zona, default=colonne_zona)
+    df_finestra = df_mercato[(df_mercato["datetime"] >= inizio_finestra) & (df_mercato["datetime"] <= fine_domani)]
 
 
-def add_forecast(fig, opt_data, ultimo_pubblicato):
-    """Previsione della zona SUD oltre l'orizzonte MGP pubblicato, con banda."""
-    if opt_data is None:
-        return False
-    _, piano, _ = opt_data
-    if piano.empty or "price_source" not in piano:
-        return False
-    prev = piano[(piano["price_source"] == "previsto") & (piano["datetime"] > ultimo_pubblicato)].copy()
-    if prev.empty:
-        return False
-    colore = ZONE_COLORS.get(ZONA_PREVISTA, BRAND)
-    banda = {"price_lo_eur_mwh", "price_hi_eur_mwh"} <= set(prev.columns) and prev["price_hi_eur_mwh"].notna().any()
-    if banda:
-        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_hi_eur_mwh"], mode="lines",
-                                 line=dict(width=0, shape="hv"), showlegend=False, hoverinfo="skip", legendgroup="prev"))
-        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_lo_eur_mwh"], mode="lines",
-                                 line=dict(width=0, shape="hv"), fill="tonexty", fillcolor="rgba(201,133,0,0.18)",
-                                 name=f"{ZONA_PREVISTA} · intervallo 80%", legendgroup="prev", hoverinfo="skip"))
-        hover = ("%{y:.1f} €/MWh  (80%: %{customdata[0]:.0f}–%{customdata[1]:.0f})"
-                 f"<extra>{ZONA_PREVISTA} previsione</extra>")
-        custom = prev[["price_lo_eur_mwh", "price_hi_eur_mwh"]].to_numpy()
+    def add_forecast(fig, opt_data, ultimo_pubblicato):
+        """Previsione della zona SUD oltre l'orizzonte MGP pubblicato, con banda."""
+        if opt_data is None:
+            return False
+        _, piano, _ = opt_data
+        if piano.empty or "price_source" not in piano:
+            return False
+        prev = piano[(piano["price_source"] == "previsto") & (piano["datetime"] > ultimo_pubblicato)].copy()
+        if prev.empty:
+            return False
+        colore = ZONE_COLORS.get(ZONA_PREVISTA, BRAND)
+        banda = {"price_lo_eur_mwh", "price_hi_eur_mwh"} <= set(prev.columns) and prev["price_hi_eur_mwh"].notna().any()
+        if banda:
+            fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_hi_eur_mwh"], mode="lines",
+                                     line=dict(width=0, shape="hv"), showlegend=False, hoverinfo="skip", legendgroup="prev"))
+            fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_lo_eur_mwh"], mode="lines",
+                                     line=dict(width=0, shape="hv"), fill="tonexty", fillcolor="rgba(201,133,0,0.18)",
+                                     name=f"{ZONA_PREVISTA} · intervallo 80%", legendgroup="prev", hoverinfo="skip"))
+            hover = ("%{y:.1f} €/MWh  (80%: %{customdata[0]:.0f}–%{customdata[1]:.0f})"
+                     f"<extra>{ZONA_PREVISTA} previsione</extra>")
+            custom = prev[["price_lo_eur_mwh", "price_hi_eur_mwh"]].to_numpy()
+        else:
+            hover, custom = f"%{{y:.1f}} €/MWh<extra>{ZONA_PREVISTA} previsione</extra>", None
+        fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines",
+                                 name=f"{ZONA_PREVISTA} · previsione", legendgroup="prev", customdata=custom,
+                                 line=dict(color=colore, width=2, dash="dash", shape="hv"), hovertemplate=hover))
+        fig.add_vrect(x0=ultimo_pubblicato, x1=prev["datetime"].max(), fillcolor="rgba(29,150,241,0.06)", line_width=0,
+                      annotation_text="PREVISIONE", annotation_position="top left",
+                      annotation_font=dict(color=INK_MUTED, size=10))
+        return True
+
+
+    if zone_sel:
+        if df_mercato.empty:
+            st.info("Nessun dato disponibile per le zone selezionate.")
+        else:
+            fig = go.Figure()
+            for zona in zone_sel:
+                colore = ZONE_COLORS.get(zona, INK_SECONDARY)
+                serie = df_mercato[["datetime", zona]].dropna().sort_values("datetime")
+                avvenuto = serie[serie["datetime"] <= adesso]
+                futuro = serie[serie["datetime"] > adesso]
+                if not avvenuto.empty and not futuro.empty:
+                    # l'ultimo punto avvenuto apre la tratta futura: linee connesse
+                    futuro = pd.concat([avvenuto.iloc[[-1]], futuro], ignore_index=True)
+                hover = "%{y:.1f} €/MWh<extra>" + zona + "</extra>"
+                # Scattergl: fluido anche con tutto lo storico nel range slider
+                if not avvenuto.empty:
+                    fig.add_trace(go.Scattergl(x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
+                                               legendgroup=zona, line=dict(color=colore, width=1.8), hovertemplate=hover))
+                if not futuro.empty:
+                    fig.add_trace(go.Scattergl(x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
+                                               legendgroup=zona, showlegend=avvenuto.empty,
+                                               line=dict(color=colore, width=1.8, dash="dot"), hovertemplate=hover))
+            if ZONA_PREVISTA in zone_sel:
+                add_forecast(fig, opt, df_mercato["datetime"].max())
+            fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED, line_width=1)
+            fig.add_annotation(x=adesso, y=1.0, yref="paper", text=f"Adesso {adesso.strftime('%H:%M')}", showarrow=False,
+                               yanchor="bottom", font=dict(color=INK_MUTED, size=10))
+            fig.update_xaxes(
+                range=[inizio_finestra, fine_dopodomani],
+                rangeslider=dict(visible=True, thickness=0.07, bgcolor="rgba(11,107,179,0.03)", bordercolor=AXIS),
+                rangeselector=dict(
+                    buttons=[
+                        dict(count=7, label="7g", step="day", stepmode="backward"),
+                        dict(count=1, label="1m", step="month", stepmode="backward"),
+                        dict(count=3, label="3m", step="month", stepmode="backward"),
+                        dict(count=1, label="1a", step="year", stepmode="backward"),
+                        dict(step="all", label="Tutto"),
+                    ],
+                    bgcolor="rgba(7,60,101,0.05)", activecolor="rgba(11,107,179,0.18)",
+                    font=dict(color=INK_SECONDARY, size=11), x=0, xanchor="left", y=1.02, yanchor="bottom",
+                ),
+                **AXIS_STYLE,
+            )
+            fig.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
+            fig.update_layout(**CHART_LAYOUT, height=580)
+            # legenda a destra, selettore del periodo a sinistra: nessuna sovrapposizione
+            fig.update_layout(margin=dict(t=90, l=10, r=10, b=10),
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                                          bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
+            st.plotly_chart(fig, use_container_width=True)
     else:
-        hover, custom = f"%{{y:.1f}} €/MWh<extra>{ZONA_PREVISTA} previsione</extra>", None
-    fig.add_trace(go.Scatter(x=prev["datetime"], y=prev["price_eur_mwh"], mode="lines",
-                             name=f"{ZONA_PREVISTA} · previsione", legendgroup="prev", customdata=custom,
-                             line=dict(color=colore, width=2, dash="dash", shape="hv"), hovertemplate=hover))
-    fig.add_vrect(x0=ultimo_pubblicato, x1=prev["datetime"].max(), fillcolor="rgba(255,255,255,0.03)", line_width=0,
-                  annotation_text="PREVISIONE", annotation_position="top left",
-                  annotation_font=dict(color=INK_MUTED, size=10))
-    return True
+        st.info("Selezionare almeno una zona.")
 
+    with st.expander("Dati tabellari (finestra visualizzata)"):
+        st.dataframe(df_finestra.drop(columns="datetime"), use_container_width=True)
 
-if zone_sel:
-    if df_mercato.empty:
-        st.info("Nessun dato disponibile per le zone selezionate.")
-    else:
-        fig = go.Figure()
-        for zona in zone_sel:
-            colore = ZONE_COLORS.get(zona, INK_SECONDARY)
-            serie = df_mercato[["datetime", zona]].dropna().sort_values("datetime")
-            avvenuto = serie[serie["datetime"] <= adesso]
-            futuro = serie[serie["datetime"] > adesso]
-            if not avvenuto.empty and not futuro.empty:
-                # l'ultimo punto avvenuto apre la tratta futura: linee connesse
-                futuro = pd.concat([avvenuto.iloc[[-1]], futuro], ignore_index=True)
-            hover = "%{y:.1f} €/MWh<extra>" + zona + "</extra>"
-            # Scattergl: fluido anche con tutto lo storico nel range slider
-            if not avvenuto.empty:
-                fig.add_trace(go.Scattergl(x=avvenuto["datetime"], y=avvenuto[zona], mode="lines", name=zona,
-                                           legendgroup=zona, line=dict(color=colore, width=1.8), hovertemplate=hover))
-            if not futuro.empty:
-                fig.add_trace(go.Scattergl(x=futuro["datetime"], y=futuro[zona], mode="lines", name=zona,
-                                           legendgroup=zona, showlegend=avvenuto.empty,
-                                           line=dict(color=colore, width=1.8, dash="dot"), hovertemplate=hover))
-        if ZONA_PREVISTA in zone_sel:
-            add_forecast(fig, opt, df_mercato["datetime"].max())
-        fig.add_vline(x=adesso, line_dash="dot", line_color=INK_MUTED, line_width=1)
-        fig.add_annotation(x=adesso, y=1.0, yref="paper", text=f"Adesso {adesso.strftime('%H:%M')}", showarrow=False,
-                           yanchor="bottom", font=dict(color=INK_MUTED, size=10))
-        fig.update_xaxes(
-            range=[inizio_finestra, fine_dopodomani],
-            rangeslider=dict(visible=True, thickness=0.07, bgcolor="rgba(255,255,255,0.02)", bordercolor=AXIS),
-            rangeselector=dict(
-                buttons=[
-                    dict(count=7, label="7g", step="day", stepmode="backward"),
-                    dict(count=1, label="1m", step="month", stepmode="backward"),
-                    dict(count=3, label="3m", step="month", stepmode="backward"),
-                    dict(count=1, label="1a", step="year", stepmode="backward"),
-                    dict(step="all", label="Tutto"),
-                ],
-                bgcolor="rgba(255,255,255,0.05)", activecolor="rgba(45,212,191,0.35)",
-                font=dict(color=INK_SECONDARY, size=11), x=0, xanchor="left", y=1.02, yanchor="bottom",
-            ),
-            **AXIS_STYLE,
-        )
-        fig.update_yaxes(title_text="€/MWh", **AXIS_STYLE)
-        fig.update_layout(**CHART_LAYOUT, height=580)
-        # legenda a destra, selettore del periodo a sinistra: nessuna sovrapposizione
-        fig.update_layout(margin=dict(t=90, l=10, r=10, b=10),
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                                      bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Selezionare almeno una zona.")
-
-with st.expander("Dati tabellari (finestra visualizzata)"):
-    st.dataframe(df_finestra.drop(columns="datetime"), use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # 2. Distribuzione mensile
@@ -514,7 +559,7 @@ def _finalizza(fig, titoli_y, altezza):
 
 
 def sezione_ottimizzazione():
-    html('<div class="fs-section"><p class="fs-eyebrow">Ottimizzazione operativa</p>'
+    html('<div class="fs-section"><p class="fs-eyebrow">Accumuli</p>'
          '<p class="fs-h2">Gestione predittiva degli accumuli</p>'
          '<p class="fs-note">Pianificazione ottimizzata su orizzonte mobile di 48 h con passo di 15 minuti, '
          'aggiornata ogni 15 minuti. Accumulo termico con pompa di calore e batteria elettrica di un sito industriale; '
@@ -675,7 +720,7 @@ def sezione_flussi():
         ("Rete elettrica", "#9aa7b4"),            # 0
         ("Fotovoltaico", ZONE_COLORS["SARD"]),    # 1
         ("Calore dall'ambiente", ZONE_COLORS["CSUD"]),  # 2
-        ("Batteria (BESS)", BRAND),               # 3
+        ("Batteria (BESS)", ACCENT),              # 3
         ("Pompa di calore", ZONE_COLORS["NORD"]),  # 4
         ("Accumulo termico (TES)", ZONE_COLORS["CNOR"]),  # 5
         ("Carico elettrico", INK_SECONDARY),      # 6
@@ -685,8 +730,8 @@ def sezione_flussi():
         ("Perdite batteria", INK_MUTED),          # 10
         ("Calore dissipato", INK_MUTED),          # 11
         ("Perdite termiche TES", INK_MUTED),      # 12
-        ("Energia accumulata in BESS", BRAND),    # 13
-        ("Energia prelevata da BESS", BRAND),     # 14
+        ("Energia accumulata in BESS", ACCENT),   # 13
+        ("Energia prelevata da BESS", ACCENT),    # 14
         ("Calore accumulato in TES", ZONE_COLORS["CNOR"]),  # 15
         ("Calore prelevato da TES", ZONE_COLORS["CNOR"]),   # 16
     ]
@@ -800,7 +845,8 @@ IMPIANTO_COLONNE = ["res_kw", "grid_import_kw", "el_demand_kw", "heat_demand_kw"
 SCHEMA_HTML = r"""
 <div id="fs-plant">
 <style>
-  #fs-plant {font-family: Helvetica Neue, Helvetica, Arial, sans-serif; color: __TEXT__; background: transparent;}
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap');
+  #fs-plant {font-family: Manrope, system-ui, sans-serif; color: __TEXT__; background: transparent;}
   #fs-plant .wrap {overflow-x: auto; -webkit-overflow-scrolling: touch;}
   #fs-plant svg {width: __SVGW__; max-width: 1000px; height: auto; display: block; margin: 0 auto;}
   #fs-plant .hint {font-size: 12px; color: __MUTED__; margin: 2px 0 0 0; display: __HINT__;}
@@ -818,8 +864,8 @@ SCHEMA_HTML = r"""
   .cap {font-size: 11.5px; font-weight: 700; letter-spacing: 1.4px; fill: __MUTED__;}
   .ctr {display: flex; align-items: center; gap: 10px; margin: 6px auto 0 auto; flex-wrap: wrap; max-width: 1000px;}
   .ctr button {background: __SURFACE__; color: __TEXT__; border: 1px solid __BORDER__; border-radius: 999px;
-               padding: 5px 14px; font-size: 13px; cursor: pointer;}
-  .ctr button.on {border-color: __BRAND__; color: __BRAND__;}
+               padding: 7px 16px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;}
+  .ctr button.on {background: __BRAND__; border-color: __BRAND__; color: #fff;}
   .ctr input[type=range] {flex: 1; min-width: 160px; accent-color: __BRAND__;}
   .ctr .t {font-size: 13px; color: __INK2__; min-width: 230px; font-variant-numeric: tabular-nums;}
   .ctr .t b {color: __TEXT__;}
@@ -880,9 +926,9 @@ E.forEach(e => {
 // --- cielo dinamico (dietro a tutto)
 const gS = document.getElementById("fs-sky");
 const lg = el("linearGradient", {id: "skyg", x1: 0, y1: 0, x2: 0, y2: 1}, defs);
-const sk0 = el("stop", {offset: "0%", "stop-color": "#0b1730", "stop-opacity": 0.0}, lg);
-const sk1 = el("stop", {offset: "22%", "stop-color": "#0b1730", "stop-opacity": 0.95}, lg);
-const sk2 = el("stop", {offset: "100%", "stop-color": "#0b1730", "stop-opacity": 0}, lg);
+const sk0 = el("stop", {offset: "0%", "stop-color": "#CFE8FB", "stop-opacity": 0.0}, lg);
+const sk1 = el("stop", {offset: "22%", "stop-color": "#CFE8FB", "stop-opacity": 0.95}, lg);
+const sk2 = el("stop", {offset: "100%", "stop-color": "#CFE8FB", "stop-opacity": 0}, lg);
 const hg = el("linearGradient", {id: "skyh", x1: 0, y1: 0, x2: 1, y2: 0}, defs);
 [[0, 0], [0.12, 1], [0.88, 1], [1, 0]].forEach(([o, a]) => el("stop", {offset: o, "stop-color": "#ffffff", "stop-opacity": a}, hg));
 const mk = el("mask", {id: "skym", maskUnits: "userSpaceOnUse", x: 0, y: 0, width: 1000, height: 260}, defs);
@@ -895,8 +941,8 @@ el("circle", {r: 30, fill: "#f5c542", opacity: 0.16}, sun);
 el("circle", {r: 15, fill: "#f5c542"}, sun);
 for (let k = 0; k < 8; k++) {const a = k * Math.PI / 4; el("line", {x1: 20 * Math.cos(a), y1: 20 * Math.sin(a), x2: 27 * Math.cos(a), y2: 27 * Math.sin(a), stroke: "#f5c542", "stroke-width": 2.5, "stroke-linecap": "round"}, sun);}
 const moon = el("g", {}, gS);
-el("circle", {r: 13, fill: "#e8eef3"}, moon);
-const moonMask = el("circle", {cx: 6, cy: -4, r: 12, fill: "#0b1730"}, moon);
+el("circle", {r: 13, fill: "#FDFDF6"}, moon);
+const moonMask = el("circle", {cx: 6, cy: -4, r: 12, fill: "#8FA9C6"}, moon);
 function mkCloud(x, y, s) {
   const w = el("g", {transform: "translate(" + x + "," + y + ") scale(" + s + ")"}, gS);
   const g = el("g", {class: "cl"}, w);
@@ -1025,13 +1071,13 @@ function draw(i) {
   let top;
   if (day) {
     const elev = Math.sin(Math.PI * d.sun_f);
-    top = mix(mix("#6b3f4f", "#1f5a82", Math.min(1, elev * 2.4)), "#3d4a57", cc / 160);
+    top = mix(mix("#F6D6BC", "#CFE8FB", Math.min(1, elev * 2.4)), "#DCE4EA", cc / 160);
     sun.setAttribute("transform", "translate(" + (70 + 640 * d.sun_f).toFixed(1) + "," + (150 - 118 * elev).toFixed(1) + ")");
     sun.style.display = ""; sun.setAttribute("opacity", (1 - 0.55 * cc / 100).toFixed(2));
     moon.style.display = "none";
     stars.forEach(s => s.style.display = "none");
   } else {
-    top = mix("#0b1730", "#252c36", cc / 140);
+    top = mix("#8FA9C6", "#9AA8B6", cc / 140);
     sun.style.display = "none";
     const mf = d.moon_f == null ? 0.5 : d.moon_f;
     moon.setAttribute("transform", "translate(" + (70 + 640 * mf).toFixed(1) + "," + (140 - 100 * Math.sin(Math.PI * mf)).toFixed(1) + ")");
@@ -1041,7 +1087,7 @@ function draw(i) {
   sk0.setAttribute("stop-color", top); sk1.setAttribute("stop-color", top); sk2.setAttribute("stop-color", top);
   moonMask.setAttribute("fill", top);
   const nc = cc < 15 ? 0 : cc < 40 ? 1 : cc < 70 ? 2 : 3;
-  clouds.forEach((g, k) => {g.style.display = k < nc ? "" : "none"; g.setAttribute("fill", day ? "#dfe7ee" : "#5f6d7c"); g.setAttribute("opacity", day ? 0.92 : 0.8);});
+  clouds.forEach((g, k) => {g.style.display = k < nc ? "" : "none"; g.setAttribute("fill", day ? "#ffffff" : "#C9D4DF"); g.setAttribute("opacity", day ? 0.95 : 0.85);});
   const descr = cc < 15 ? "sereno" : cc < 40 ? "poco nuvoloso" : cc < 70 ? "nuvoloso" : "coperto";
   const ta = d.air_temp_c;
   tMeteo.textContent = (ta == null ? "\u2013" : ta.toFixed(1).replace(".", ",") + " \u00b0C") + " \u00b7 " + descr;
@@ -1130,8 +1176,8 @@ def sezione_impianto():
             x[c] = None if c not in r or pd.isna(r[c]) else round(float(r[c]), 1)
         x["sun_f"], x["moon_f"] = astro.get(r["datetime"], (None, None))
         righe.append(x)
-    colori = dict(pv=ZONE_COLORS["SARD"], grid="#9aa7b4", bess=BRAND, heat=ZONE_COLORS["CNOR"], ink2=INK_SECONDARY,
-                  amb=ZONE_COLORS["CSUD"], hp=ZONE_COLORS["NORD"], off=GRID, muted=INK_MUTED,
+    colori = dict(pv=ZONE_COLORS["SARD"], grid="#8C9BAA", bess=ACCENT, heat=ZONE_COLORS["CNOR"], ink2=INK_SECONDARY,
+                  amb=ZONE_COLORS["CSUD"], hp=ZONE_COLORS["NORD"], off="#D5E3F0", muted=INK_MUTED,
                   price=ZONE_COLORS["SUD"], pricefc="#f2b544", text=TEXT,
                   surface=SURFACE, border=BORDER, cold="#2c6e9e")
     pagina = (SCHEMA_HTML.replace("__DATA__", json.dumps(righe)).replace("__NOW__", str(now_idx))
@@ -1230,32 +1276,20 @@ def sezione_risparmio():
 
 
 # ---------------------------------------------------------------------------
-# Ordine delle sezioni sotto il grafico dei prezzi
+# Contenuto delle altre schede: ogni sezione è isolata, se fallisce compare solo un avviso
 # ---------------------------------------------------------------------------
-try:
-    sezione_impianto()
-except Exception:
-    st.info("Sezione impianto temporaneamente non disponibile.")
-
-try:
-    sezione_risparmio()
-except Exception:
-    st.info("Sezione risparmio temporaneamente non disponibile.")
-
-try:
-    sezione_distribuzione()
-except Exception:
-    st.info("Sezione distribuzione temporaneamente non disponibile.")
-
-try:
-    sezione_ottimizzazione()
-except Exception:
-    st.info("Sezione di ottimizzazione temporaneamente non disponibile.")
-
-try:
-    sezione_flussi()
-except Exception:
-    st.info("Sezione flussi energetici temporaneamente non disponibile.")
+for scheda, funzione, nome in (
+    (schede[1], "sezione_impianto", "impianto"),
+    (schede[2], "sezione_risparmio", "risparmio"),
+    (schede[3], "sezione_ottimizzazione", "accumuli"),
+    (schede[4], "sezione_flussi", "flussi energetici"),
+    (schede[5], "sezione_distribuzione", "statistiche"),
+):
+    with scheda:
+        try:
+            globals()[funzione]()
+        except Exception:
+            st.info(f"Sezione {nome} temporaneamente non disponibile.")
 
 
 # ---------------------------------------------------------------------------
@@ -1264,12 +1298,14 @@ except Exception:
 html(
     f"""
     <div class="fs-foot">
-      <a class="fs-logo" style="font-size:20px;" href="{SITE_URL}" target="_blank">fore<b>see</b></a>
-      &nbsp;·&nbsp; See ahead. Save ahead.<br>
-      Fonti: prezzi MGP del GME tramite ENTSO-E Transparency Platform · dati meteo
-      <a href="https://open-meteo.com" target="_blank">Open-Meteo</a> (CC BY 4.0).
-      Storico e pipeline di raccolta: <a href="{GITHUB_REPO_URL}" target="_blank">GianfraG/gme-prices</a>.
-      Le previsioni hanno carattere indicativo.
+      <a href="{SITE_URL}" target="_blank" rel="noopener">{logo_html("foresee. see ahead. save ahead.")}</a>
+      <div>
+        Gestione energetica predittiva per l'industria energivora · <a href="{SITE_URL}" target="_blank" rel="noopener">foresee.energy</a><br>
+        Fonti: prezzi MGP del GME tramite ENTSO-E Transparency Platform · dati meteo
+        <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0).
+        Storico e raccolta dati: <a href="{GITHUB_REPO_URL}" target="_blank" rel="noopener">GianfraG/gme-prices</a>.<br>
+        Previsioni e risultati del sito di esempio hanno carattere indicativo; i profili di domanda sono simulati.
+      </div>
     </div>
     """
 )
