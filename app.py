@@ -9,7 +9,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 st.set_page_config(
-    page_title="foresee. — Prezzi dell'energia e previsione",
+    page_title="foresee. — Prezzi, previsione e impianto in tempo reale",
     layout="wide",
     page_icon="assets/favicon.png" if os.path.exists("assets/favicon.png") else "⚡",
 )
@@ -250,14 +250,14 @@ html(
     f"""
     <div class="fs-top">
       <a href="{SITE_URL}" target="_blank" rel="noopener" title="foresee.energy">{logo_html()}</a>
-      <div class="r"><span class="fs-tag">Mercato elettrico italiano · zone di offerta</span>
+      <div class="r"><span class="fs-tag">Mercato elettrico · gestione predittiva</span>
         <a class="fs-btn" href="{SITE_URL}" target="_blank" rel="noopener">foresee.energy ↗</a></div>
     </div>
-    <p class="fs-eyebrow">Dashboard prezzi</p>
-    <p class="fs-h1">Prezzi dell'energia elettrica e previsione</p>
-    <p class="fs-sub">Prezzi zonali del mercato del giorno prima (MGP) in €/MWh, la nostra previsione per la zona SUD
-    e la gestione predittiva degli accumuli di un sito industriale di esempio. Risoluzione a 15 minuti dal 1° ottobre 2025,
-    oraria in precedenza.</p>
+    <p class="fs-eyebrow">Dashboard in tempo reale</p>
+    <p class="fs-h1">Prezzi, previsione e impianto in tempo reale</p>
+    <p class="fs-sub">Prezzi zonali del mercato del giorno prima (MGP) in €/MWh e la nostra previsione per la zona SUD.
+    Accanto, un sito industriale di esempio gestito in tempo reale con la gestione predittiva: impianto, accumuli termici
+    ed elettrici, risparmio e flussi di energia. Prezzi a 15 minuti dal 1° ottobre 2025, orari in precedenza.</p>
     """
 )
 
