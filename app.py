@@ -135,11 +135,26 @@ st.markdown(
       .fs-table td {{color:{INK_SECONDARY}; padding:.4rem .5rem; border-bottom:1px solid {GRID}; vertical-align:top;}}
       .fs-table td span {{color:{INK_MUTED};}}
       .fs-table th:last-child, .fs-table td:last-child {{text-align:right; white-space:nowrap; color:{TEXT};}}
-      .stTabs [data-baseweb="tab-list"] {{gap:.3rem; border-bottom:1px solid {BORDER}; flex-wrap:nowrap; overflow-x:auto;}}
-      .stTabs [data-baseweb="tab"] {{font-family:{FONT}; font-weight:600; font-size:.95rem; color:{INK_SECONDARY};
-                                     padding:.6rem .95rem; border-radius:999px 999px 0 0; white-space:nowrap;}}
-      .stTabs [aria-selected="true"] {{color:{BRAND} !important;}}
-      .stTabs [data-baseweb="tab-highlight"] {{background:{BRAND};}}
+      .fs-tabs-hint {{color:{INK_SECONDARY}; font-size:.85rem; font-weight:600; margin:1.6rem 0 .15rem 0;}}
+      /* Schede come pulsanti. Selettori per entrambe le strutture di Streamlit (role=tab e data-baseweb=tab). */
+      .stTabs [role="tablist"] {{gap:.5rem !important; flex-wrap:wrap !important; overflow:visible !important;
+                                 padding:.35rem 0 .9rem 0 !important; border-bottom:1px solid {BORDER} !important;}}
+      .stTabs [role="tab"] {{font-family:{FONT}; font-weight:600; font-size:.95rem; color:{TEXT} !important;
+                             height:auto !important; margin:0 !important; padding:.55rem 1.1rem !important;
+                             white-space:nowrap; cursor:pointer; background:{SURFACE} !important;
+                             border:1.5px solid {AXIS} !important; border-radius:999px !important;
+                             box-shadow:0 1px 3px rgba(7,60,101,.08);
+                             transition:background .15s, border-color .15s, color .15s, box-shadow .15s;}}
+      .stTabs [role="tab"] p {{color:inherit !important; font-weight:600; font-size:.95rem; margin:0;}}
+      .stTabs [role="tab"]:hover {{background:{SURFACE_2} !important; border-color:{BRAND} !important;
+                                   color:{BRAND} !important; box-shadow:0 2px 6px rgba(11,107,179,.16);}}
+      .stTabs [role="tab"]:focus-visible {{outline:2px solid {ACCENT}; outline-offset:2px;}}
+      .stTabs [role="tab"][aria-selected="true"], .stTabs [role="tab"][aria-selected="true"]:hover {{
+                             background:{BRAND} !important; border-color:{BRAND} !important; color:#FFFFFF !important;
+                             box-shadow:0 2px 8px rgba(11,107,179,.28);}}
+      /* via la sottolineatura della scheda attiva: il pulsante pieno basta */
+      .stTabs [role="tab"] > div:not([data-testid]),
+      .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{display:none !important;}}
       .fs-foot {{margin-top:3.2rem; padding:1.6rem 0 .4rem 0; border-top:1px solid {BORDER}; color:{INK_SECONDARY};
                  font-size:.82rem; line-height:1.7; display:flex; gap:1.6rem; align-items:flex-start; flex-wrap:wrap;}}
       .fs-foot img {{height:54px; width:auto;}}
@@ -309,6 +324,7 @@ html('<div class="fs-chips">' + "".join(f'<span class="fs-chip">{c}</span>' for 
 # ---------------------------------------------------------------------------
 # 1. Andamento prezzi
 # ---------------------------------------------------------------------------
+html('<p class="fs-tabs-hint">Scegli la sezione da visualizzare:</p>')
 schede = st.tabs(["Prezzi e previsione", "Impianto in tempo reale", "Risparmio", "Accumuli",
                   "Flussi di energia", "Statistiche"])
 
